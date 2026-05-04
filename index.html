@@ -24,21 +24,46 @@ body { margin:0; font-family:-apple-system; background:#f2f2f7;}
 input,textarea{width:100%;padding:10px;border:none;}
 textarea{height:90px;}
 
-.item{
-  padding:10px;
-  border-bottom:1px solid #eee;
-  display:flex;
-  justify-content:space-between;
-  background:#fff;
-}
-
-.dragging{opacity:0.5;}
-
 .zone-block{margin-bottom:10px;}
 .zone-title{font-weight:bold;margin-bottom:4px;}
 
-button{width:100%;padding:12px;border:none;border-radius:10px;background:#007aff;color:#fff;margin-top:6px;}
-.small-btn{width:auto;background:#ff3b30;padding:6px 10px;font-size:12px;}
+.item{
+  display:flex;
+  align-items:center;
+  padding:10px;
+  border-bottom:1px solid #eee;
+}
+
+.handle{
+  font-size:18px;
+  margin-right:10px;
+  cursor:grab;
+}
+
+.dragging{
+  opacity:0.5;
+}
+
+.addr{
+  flex:1;
+}
+
+button{
+  width:100%;
+  padding:12px;
+  border:none;
+  border-radius:10px;
+  background:#007aff;
+  color:#fff;
+  margin-top:6px;
+}
+
+.small-btn{
+  width:auto;
+  background:#ff3b30;
+  padding:6px 10px;
+  font-size:12px;
+}
 </style>
 </head>
 
@@ -52,28 +77,44 @@ button{width:100%;padding:12px;border:none;border-radius:10px;background:#007aff
 </div>
 
 <div id="deliveryPage">
-  <div id="tabs" class="tabs"></div>
 
-  <div class="card">
-    <input id="search" placeholder="住所検索（かなOK）">
-    <div id="suggest"></div>
-  </div>
+<div id="tabs" class="tabs"></div>
 
-  <div class="card">
-    <div id="zoneTitle"></div>
-    <div id="result"></div>
-  </div>
+<div class="card">
+  <input id="search" placeholder="住所検索（かなOK）">
+  <div id="suggest"></div>
+</div>
+
+<div class="card">
+  <div id="zoneTitle"></div>
+  <div id="result"></div>
+</div>
+
 </div>
 
 <div id="masterPage" class="hidden">
 
-  <div class="card">
-    <input id="zoneInput" placeholder="区間">
-    <textarea id="addressInput" placeholder="住所（改行）"></textarea>
-    <button onclick="addMaster()">追加</button>
-  </div>
+<div class="card">
+  <div>📂 CSVファイル</div>
+  <input type="file" id="csvFile">
+  <button onclick="importCSVFile()">読み込み</button>
+</div>
 
-  <div id="masterList"></div>
+<div class="card">
+  <div>✏️ CSVテキスト</div>
+  <textarea id="csvText"></textarea>
+  <button onclick="importCSVText()">読み込み</button>
+</div>
+
+<div class="card">
+  <input id="zoneInput" placeholder="区間">
+  <textarea id="addressInput" placeholder="住所（改行）"></textarea>
+  <button onclick="addMaster()">追加</button>
+</div>
+
+<div id="masterList"></div>
+
+<button onclick="exportCSV()">CSVコピー</button>
 
 </div>
 
@@ -81,129 +122,49 @@ button{width:100%;padding:12px;border:none;border-radius:10px;background:#007aff
 
 <script>
 
-// ===== 状態 =====
 let master = JSON.parse(localStorage.getItem("master")||"[]");
 let selected = JSON.parse(localStorage.getItem("selected")||"{}");
 let zones=[];
 let currentZone="";
-let draggingEl = null;
 
-// ===== 保存 =====
+const hiraMap={"にし":"西","ひがし":"東","みなみ":"南","きた":"北"};
+function normalize(t){
+  Object.keys(hiraMap).forEach(k=>{ if(t.includes(k)) t=t.replace(k,hiraMap[k]); });
+  return t;
+}
+
 function saveAll(){
   localStorage.setItem("master",JSON.stringify(master));
   localStorage.setItem("selected",JSON.stringify(selected));
 }
 
-// ===== ゾーン =====
-function updateZones(){
-  zones=[...new Set(master.map(m=>m.zone))];
-  currentZone=currentZone||zones[0];
-  renderTabs();
-}
+function parseCSV(text){
+  const lines=text.trim().split("\n");
+  const h=lines[0].split(",");
+  const zi=h.indexOf("zone"), oi=h.indexOf("order"), ai=h.indexOf("address");
 
-// ===== タブ =====
-function renderTabs(){
-  const tabs=document.getElementById("tabs");
-  tabs.innerHTML="";
-  zones.forEach(z=>{
-    const d=document.createElement("div");
-    d.className="tab";
-    d.textContent=z;
-    if(z===currentZone)d.classList.add("active");
-    d.onclick=()=>{currentZone=z; render(); renderTabs();};
-    tabs.appendChild(d);
-  });
-}
+  master=lines.slice(1).map(l=>{
+    const c=l.split(",");
+    return {zone:c[zi],order:Number(c[oi]),address:c[ai]};
+  }).filter(x=>x.address);
 
-// ===== マスタ表示（修正版D&D）=====
-function renderMaster(){
-  const box=document.getElementById("masterList");
-  box.innerHTML="";
-
-  zones.forEach(z=>{
-    const block=document.createElement("div");
-    block.className="card zone-block";
-    block.dataset.zone = z;
-
-    const title=document.createElement("div");
-    title.className="zone-title";
-    title.textContent=`区間 ${z}`;
-    block.appendChild(title);
-
-    const list=document.createElement("div");
-
-    master.filter(m=>m.zone===z)
-      .sort((a,b)=>a.order-b.order)
-      .forEach(m=>{
-
-      const div=document.createElement("div");
-      div.className="item";
-      div.draggable=true;
-      div.dataset.zone=z;
-      div.dataset.address=m.address;
-
-      div.innerHTML=`${m.address}
-        <button class="small-btn" onclick="deleteItem('${z}','${m.address}')">削除</button>`;
-
-      div.addEventListener("dragstart", ()=>{
-        draggingEl = div;
-        div.classList.add("dragging");
-      });
-
-      div.addEventListener("dragend", ()=>{
-        div.classList.remove("dragging");
-        draggingEl = null;
-        reOrder(z);
-      });
-
-      div.addEventListener("dragover", e=>{
-        e.preventDefault();
-        if(!draggingEl || draggingEl===div) return;
-
-        const parent = div.parentNode;
-        const rect = div.getBoundingClientRect();
-        const offset = e.clientY - rect.top;
-
-        if(offset > rect.height/2){
-          parent.insertBefore(draggingEl, div.nextSibling);
-        }else{
-          parent.insertBefore(draggingEl, div);
-        }
-      });
-
-      list.appendChild(div);
-    });
-
-    block.appendChild(list);
-    box.appendChild(block);
-  });
-}
-
-// ===== 並び再計算 =====
-function reOrder(zone){
-  const block = document.querySelector(`[data-zone="${zone}"]`);
-  if(!block) return;
-
-  const items = [...block.querySelectorAll(".item")];
-
-  items.forEach((el,i)=>{
-    const addr = el.dataset.address;
-    const target = master.find(m=>m.zone===zone && m.address===addr);
-    if(target) target.order = i+1;
-  });
-
-  saveAll();
-}
-
-// ===== 削除 =====
-function deleteItem(z,a){
-  master = master.filter(m=>!(m.zone===z && m.address===a));
   updateZones();
   renderMaster();
+  render();
   saveAll();
 }
 
-// ===== 追加 =====
+function importCSVFile(){
+  const f=document.getElementById("csvFile").files[0];
+  const r=new FileReader();
+  r.onload=e=>parseCSV(e.target.result);
+  r.readAsText(f);
+}
+
+function importCSVText(){
+  parseCSV(document.getElementById("csvText").value);
+}
+
 function addMaster(){
   const z=document.getElementById("zoneInput").value;
   const lines=document.getElementById("addressInput").value.split("\n");
@@ -219,9 +180,132 @@ function addMaster(){
   saveAll();
 }
 
-// ===== 配達 =====
+function updateZones(){
+  zones=[...new Set(master.map(m=>m.zone))];
+  currentZone=currentZone||zones[0];
+  renderTabs();
+}
+
+function renderTabs(){
+  const tabs=document.getElementById("tabs");
+  tabs.innerHTML="";
+  zones.forEach(z=>{
+    const d=document.createElement("div");
+    d.className="tab";
+    d.textContent=z;
+    if(z===currentZone)d.classList.add("active");
+    d.onclick=()=>{currentZone=z; render(); renderTabs();};
+    tabs.appendChild(d);
+  });
+}
+
+// ===== ドラッグ修正版 =====
+let draggingEl = null;
+
+function renderMaster(){
+  const box=document.getElementById("masterList");
+  box.innerHTML="";
+
+  zones.forEach(z=>{
+    const block=document.createElement("div");
+    block.className="card zone-block";
+
+    const title=document.createElement("div");
+    title.className="zone-title";
+    title.textContent=`区間 ${z}`;
+    block.appendChild(title);
+
+    const list = master.filter(m=>m.zone===z).sort((a,b)=>a.order-b.order);
+
+    list.forEach(m=>{
+      const div=document.createElement("div");
+      div.className="item";
+
+      const handle=document.createElement("div");
+      handle.className="handle";
+      handle.textContent="≡";
+
+      handle.draggable=true;
+
+      handle.ondragstart=(e)=>{
+        draggingEl = div;
+        div.classList.add("dragging");
+      };
+
+      handle.ondragend=()=>{
+        div.classList.remove("dragging");
+        draggingEl=null;
+        reOrder(z);
+      };
+
+      div.ondragover=(e)=>{
+        e.preventDefault();
+        const target = div;
+        if(!draggingEl || draggingEl===target) return;
+
+        const rect = target.getBoundingClientRect();
+        const offset = e.clientY - rect.top;
+
+        if(offset > rect.height / 2){
+          target.after(draggingEl);
+        }else{
+          target.before(draggingEl);
+        }
+      };
+
+      const addr=document.createElement("div");
+      addr.className="addr";
+      addr.textContent=m.address;
+
+      const del=document.createElement("button");
+      del.className="small-btn";
+      del.textContent="削除";
+      del.onclick=()=>deleteItem(z,m.address);
+
+      div.appendChild(handle);
+      div.appendChild(addr);
+      div.appendChild(del);
+
+      block.appendChild(div);
+    });
+
+    box.appendChild(block);
+  });
+}
+
+function reOrder(zone){
+  const blocks=[...document.querySelectorAll(".zone-block")];
+  const block=blocks.find(b=>b.innerText.includes(zone));
+  if(!block) return;
+
+  const items=[...block.querySelectorAll(".item")];
+
+  items.forEach((el,i)=>{
+    const addr=el.querySelector(".addr").textContent;
+    const t=master.find(m=>m.zone===zone && m.address===addr);
+    if(t) t.order=i+1;
+  });
+
+  saveAll();
+}
+
+function deleteItem(z,a){
+  master=master.filter(m=>!(m.zone===z && m.address===a));
+  updateZones();
+  renderMaster();
+  saveAll();
+}
+
+function exportCSV(){
+  let csv="zone,order,address\n";
+  master.forEach(m=>csv+=`${m.zone},${m.order},${m.address}\n`);
+  navigator.clipboard.writeText(csv);
+  alert("コピー完了");
+}
+
+// 配達
 search.addEventListener("input", ()=>{
-  const val=search.value;
+  const val=normalize(search.value);
   suggest.innerHTML="";
   master.filter(m=>m.zone===currentZone && m.address.includes(val))
     .slice(0,10)
@@ -251,7 +335,6 @@ function render(){
   zoneTitle.textContent=`配達順（${currentZone||"-"}）`;
 }
 
-// ===== ページ切替 =====
 function switchPage(p){
   deliveryPage.classList.toggle("hidden",p!=="delivery");
   masterPage.classList.toggle("hidden",p!=="master");
@@ -260,7 +343,6 @@ function switchPage(p){
   });
 }
 
-// 初期化
 updateZones();
 renderMaster();
 render();
