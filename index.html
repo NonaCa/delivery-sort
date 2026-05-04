@@ -32,6 +32,10 @@ button {
   color: #fff;
 }
 
+button:disabled {
+  opacity: 0.6;
+}
+
 textarea, input {
   width: 100%;
   font-size: 16px;
@@ -75,6 +79,21 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
   color: #999;
   margin-top: 4px;
 }
+
+/* ステータス表示 */
+#status {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #111;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  opacity: 0;
+  transition: 0.3s;
+}
 </style>
 </head>
 
@@ -94,7 +113,7 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
 <section>
 <h3>カメラ</h3>
 <video id="video" autoplay playsinline></video>
-<button onclick="capture()">📸 読み取り</button>
+<button id="scanBtn" onclick="capture()">📸 読み取り</button>
 </section>
 
 <section>
@@ -113,15 +132,15 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
 <div id="list"></div>
 </section>
 
+<div id="status"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
 
 <script>
-
 let master = [];
 let results = [];
 let scanning = false;
 
-/* 初期マスタ */
 const defaultMaster = `
 1,東京都新宿区西新宿1-1-1
 2,東京都渋谷区渋谷2-2-2
@@ -136,21 +155,30 @@ const defaultMaster = `
 11,東京都千代田区大手町二丁目3番1号
 `.trim();
 
-document.getElementById("csvInput").value = defaultMaster;
+csvInput.value = defaultMaster;
 loadCSV();
 
-/* カメラ起動 */
+/* カメラ */
 navigator.mediaDevices.getUserMedia({
   video: { facingMode: { ideal: "environment" } }
-}).then(s => {
-  video.srcObject = s;
-});
+}).then(s => video.srcObject = s);
 
-/* マスタ読み込み */
+/* ステータス表示 */
+function showStatus(text,type="normal"){
+  const el = status;
+  el.innerText = text;
+
+  if(type==="error") el.style.background="#ff3b30";
+  else if(type==="ok") el.style.background="#34c759";
+  else el.style.background="#111";
+
+  el.style.opacity = 1;
+  setTimeout(()=>el.style.opacity=0,1500);
+}
+
+/* マスタ */
 function loadCSV(){
-  const text = csvInput.value;
-
-  master = text.split("\n").map(l=>{
+  master = csvInput.value.split("\n").map(l=>{
     const [order,address] = l.split(",");
     return {
       order: parseInt(order),
@@ -160,7 +188,7 @@ function loadCSV(){
   });
 
   localStorage.setItem("master", JSON.stringify(master));
-  alert("OK");
+  showStatus("マスタ読込OK","ok");
 }
 
 /* OCR */
@@ -168,43 +196,63 @@ async function capture(){
   if(scanning) return;
   scanning = true;
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const btn = scanBtn;
+  btn.innerText = "読み取り中…";
+  btn.disabled = true;
 
-  canvas.width = video.videoWidth * 1.5;
-  canvas.height = video.videoHeight * 1.5;
+  showStatus("読み取り中…");
 
-  ctx.filter = "contrast(2) brightness(1.2)";
+  try{
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
 
-  ctx.drawImage(
-    video,
-    video.videoWidth * 0.1,
-    video.videoHeight * 0.2,
-    video.videoWidth * 0.8,
-    video.videoHeight * 0.4,
-    0,0,
-    canvas.width,
-    canvas.height
-  );
+    canvas.width = video.videoWidth * 1.5;
+    canvas.height = video.videoHeight * 1.5;
 
-  const { data:{ text } } = await Tesseract.recognize(canvas,"jpn",{
-    tessedit_char_whitelist: "0123456789-丁目番号東京都区市町村"
-  });
+    ctx.filter = "contrast(2) brightness(1.2)";
+    ctx.drawImage(video,
+      video.videoWidth*0.1,
+      video.videoHeight*0.2,
+      video.videoWidth*0.8,
+      video.videoHeight*0.4,
+      0,0,canvas.width,canvas.height
+    );
 
-  const addr = extract(text);
-  if(!addr){ scanning=false; return; }
+    const { data:{ text } } = await Tesseract.recognize(canvas,"jpn",{
+      tessedit_char_whitelist:"0123456789-丁目番号東京都区市町村"
+    });
 
-  const clean = normalize(addr);
-  addressInput.value = clean;
+    const addr = extract(text);
 
-  navigator.vibrate?.(50);
+    if(!addr){
+      showStatus("読めなかった","error");
+      scanning=false;
+      resetBtn();
+      return;
+    }
 
-  showCandidates(clean);
+    const clean = normalize(addr);
+    addressInput.value = clean;
 
-  scanning = false;
+    navigator.vibrate?.(50);
+    showStatus("OK","ok");
+
+    showCandidates(clean);
+
+  }catch(e){
+    showStatus("エラー","error");
+  }
+
+  scanning=false;
+  resetBtn();
 }
 
-/* 正規化（最重要） */
+function resetBtn(){
+  scanBtn.innerText="📸 読み取り";
+  scanBtn.disabled=false;
+}
+
+/* 正規化 */
 function normalize(addr){
   return addr
     .replace(/[０-９]/g,s=>String.fromCharCode(s.charCodeAt(0)-65248))
@@ -217,30 +265,28 @@ function normalize(addr){
 }
 
 /* マッチング */
-function matchScore(input, master){
-  if(input === master) return 100;
+function matchScore(input,master){
+  if(input===master) return 100;
 
-  let score = 0;
+  let score=0;
+  const a=input.match(/\d+/g)||[];
+  const b=master.match(/\d+/g)||[];
 
-  const a = input.match(/\d+/g) || [];
-  const b = master.match(/\d+/g) || [];
-
-  score += a.filter(n=>b.includes(n)).length * 10;
-
-  if(master.includes(input)) score += 20;
-  if(input.includes(master)) score += 20;
+  score+=a.filter(n=>b.includes(n)).length*10;
+  if(master.includes(input)) score+=20;
+  if(input.includes(master)) score+=20;
 
   return score;
 }
 
-/* 候補表示 */
+/* 候補 */
 function showCandidates(text){
   const list = master
     .map(m=>({...m,score:matchScore(text,m.key)}))
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
 
-  candidates.innerHTML = list.map(c=>`
+  candidates.innerHTML=list.map(c=>`
     <div class="item">
       <div>${c.order}. ${c.address}</div>
       <button onclick="select(${c.order})">追加</button>
@@ -248,25 +294,20 @@ function showCandidates(text){
   `).join("");
 }
 
-/* 選択 */
 function select(order){
-  const m = master.find(x=>x.order===order);
-  if(!m) return;
-
+  const m=master.find(x=>x.order===order);
   if(!results.find(r=>r.order===order)){
     results.push(m);
     update();
   }
-
   candidates.innerHTML="";
 }
 
 /* 手動 */
 function addManual(){
-  const v = addressInput.value;
-  const clean = normalize(v);
+  const clean=normalize(addressInput.value);
 
-  const m = master
+  const m=master
     .map(m=>({...m,score:matchScore(clean,m.key)}))
     .sort((a,b)=>b.score-a.score)[0];
 
@@ -280,15 +321,15 @@ function addManual(){
 
 /* 削除 */
 function remove(order){
-  results = results.filter(r=>r.order!==order);
+  results=results.filter(r=>r.order!==order);
   update();
 }
 
-/* 表示更新 */
+/* 更新 */
 function update(){
   results.sort((a,b)=>a.order-b.order);
 
-  list.innerHTML = results.map(r=>`
+  list.innerHTML=results.map(r=>`
     <div class="item">
       <div>${r.order}. ${r.address}</div>
       <button class="small-btn" onclick="remove(${r.order})">削除</button>
@@ -298,14 +339,12 @@ function update(){
   updateNext();
 }
 
-/* 次の目的地（ゴースト） */
+/* ゴースト */
 function updateNext(){
-  const remaining = master.filter(m=>!results.find(r=>r.order===m.order));
-  if(remaining.length){
-    nextHint.innerText = "次: " + remaining.sort((a,b)=>a.order-b.order)[0].address;
-  }else{
-    nextHint.innerText = "完了 🎉";
-  }
+  const remaining=master.filter(m=>!results.find(r=>r.order===m.order));
+  nextHint.innerText=remaining.length
+    ? "次: "+remaining.sort((a,b)=>a.order-b.order)[0].address
+    : "完了 🎉";
 }
 
 /* OCR補助 */
@@ -314,8 +353,6 @@ function extract(t){
     (l.includes("区")||l.includes("市")) && /\d/.test(l)
   );
 }
-
 </script>
-
 </body>
 </html>
