@@ -9,10 +9,11 @@ button { font-size: 18px; padding: 10px; margin: 5px 0; }
 textarea, input { width: 100%; font-size: 16px; padding: 8px; }
 video {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 40vh;
   object-fit: cover;
   background: #000;
-} background: #000; }
+  border-radius: 8px;
+}
 .result { margin-top: 10px; font-weight: bold; }
 .list { margin-top: 20px; }
 </style>
@@ -30,6 +31,7 @@ video {
 <h3>② カメラ</h3>
 <video id="video" autoplay playsinline></video>
 <button onclick="capture()">📸 撮影（読み取り）</button>
+<button onclick="toggleCamera()" id="toggleBtn">⏸ 一時停止</button>
 
 <h3>③ 入力（OCR or 手入力）</h3>
 <input id="addressInput" placeholder="住所を入力">
@@ -46,6 +48,7 @@ video {
 let master = [];
 let results = [];
 let stream;
+let isPaused = false;
 
 // 外カメラ優先
 navigator.mediaDevices.getUserMedia({
@@ -62,6 +65,19 @@ navigator.mediaDevices.getUserMedia({
         document.getElementById("video").srcObject = stream;
     });
 });
+
+// 一時停止 / 再開
+function toggleCamera() {
+    if (!stream) return;
+
+    const track = stream.getVideoTracks()[0];
+    isPaused = !isPaused;
+
+    track.enabled = !isPaused;
+
+    document.getElementById("toggleBtn").innerText =
+        isPaused ? "▶ 再開" : "⏸ 一時停止";
+}
 
 // CSV読み込み
 function loadCSV() {
@@ -84,6 +100,7 @@ function loadCSV() {
 // 撮影→OCR→入力欄へ
 async function capture() {
     const video = document.getElementById("video");
+
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
