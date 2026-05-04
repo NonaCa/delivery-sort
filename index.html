@@ -12,9 +12,26 @@ body {
   background: #f2f2f7;
 }
 
-.container {
-  padding: 12px;
+.container { padding: 12px; }
+
+.top-tabs {
+  display: flex;
+  margin-bottom: 10px;
 }
+
+.top-tab {
+  flex: 1;
+  padding: 12px;
+  text-align: center;
+  background: #ddd;
+}
+
+.top-tab.active {
+  background: #007aff;
+  color: white;
+}
+
+.hidden { display: none; }
 
 .tabs {
   display: flex;
@@ -23,49 +40,40 @@ body {
 }
 
 .tab {
-  padding: 10px 14px;
+  padding: 8px 12px;
   background: #ddd;
   border-radius: 10px;
   margin-right: 6px;
 }
 
-.tab.active {
-  background: #007aff;
-  color: white;
-}
+.tab.active { background:#007aff; color:white; }
 
 .card {
   background: white;
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 10px;
   margin-bottom: 10px;
 }
 
 input, textarea {
   width: 100%;
-  padding: 12px;
-  font-size: 16px;
+  padding: 10px;
   border: none;
 }
 
-textarea {
-  height: 100px;
-  resize: none;
-}
+textarea { height: 80px; }
 
-.suggest div {
-  padding: 12px;
-  border-bottom: 1px solid #eee;
-}
-
-.list-item {
+.item {
   padding: 10px;
   border-bottom: 1px solid #eee;
+  background: white;
 }
+
+.dragging { opacity: 0.5; }
 
 button {
   width: 100%;
-  padding: 14px;
+  padding: 12px;
   border: none;
   border-radius: 10px;
   background: #007aff;
@@ -79,33 +87,43 @@ button {
 
 <div class="container">
 
-<h3>📦 配達ソート</h3>
+<!-- 上位タブ -->
+<div class="top-tabs">
+  <div class="top-tab active" onclick="switchPage('delivery')">🚚 配達</div>
+  <div class="top-tab" onclick="switchPage('master')">🛠️ マスタ作成</div>
+</div>
+
+<!-- 配達画面 -->
+<div id="deliveryPage">
 
 <div id="tabs" class="tabs"></div>
 
 <div class="card">
-  <input id="search" placeholder="住所検索（ひらがなOK）">
+  <input id="search" placeholder="住所検索">
   <div id="suggest"></div>
 </div>
 
 <div class="card">
-  <div id="zoneTitle">配達順</div>
+  <div id="zoneTitle"></div>
   <div id="result"></div>
 </div>
 
-<div class="card">
-  <div>📂 CSVファイル</div>
-  <input type="file" id="csvFile" accept=".csv">
-  <button onclick="importCSVFile()">ファイル読み込み</button>
 </div>
 
+<!-- マスタ作成 -->
+<div id="masterPage" class="hidden">
+
 <div class="card">
-  <div>✏️ CSVテキスト</div>
-  <textarea id="csvText" placeholder="ここにCSVを貼り付け"></textarea>
-  <button onclick="importCSVText()">テキスト読み込み</button>
+  <input id="zoneInput" placeholder="区間（例:A）">
+  <textarea id="addressInput" placeholder="住所を改行で入力"></textarea>
+  <button onclick="addMaster()">追加</button>
 </div>
 
-<button onclick="clearList()">リセット</button>
+<div class="card" id="masterList"></div>
+
+<button onclick="exportCSV()">CSVコピー</button>
+
+</div>
 
 </div>
 
@@ -115,67 +133,47 @@ button {
 let master = [];
 let zones = [];
 let currentZone = "";
-let selected = JSON.parse(localStorage.getItem("list") || "{}");
+let selected = {};
 
-// ===== DOM =====
-const tabs = document.getElementById("tabs");
-const search = document.getElementById("search");
-const suggest = document.getElementById("suggest");
-const result = document.getElementById("result");
-const zoneTitle = document.getElementById("zoneTitle");
+// ===== ページ切替 =====
+function switchPage(p){
+  document.getElementById("deliveryPage").classList.toggle("hidden", p!=="delivery");
+  document.getElementById("masterPage").classList.toggle("hidden", p!=="master");
 
-// ===== ひらがな変換 =====
-const hiraMap = {"にし":"西","ひがし":"東","みなみ":"南","きた":"北"};
-
-function normalize(t){
-  Object.keys(hiraMap).forEach(k=>{
-    if(t.includes(k)) t = t.replace(k,hiraMap[k]);
+  document.querySelectorAll(".top-tab").forEach((t,i)=>{
+    t.classList.toggle("active", (p==="delivery" && i===0) || (p==="master" && i===1));
   });
-  return t;
 }
 
-// ===== 共通CSVパース =====
-function parseCSV(text){
-  const lines = text.trim().split("\n").slice(1);
+// ===== マスタ追加 =====
+function addMaster(){
+  const zone = document.getElementById("zoneInput").value;
+  const lines = document.getElementById("addressInput").value.split("\n");
 
-  master = lines.map(l=>{
-    const [zone,address,order] = l.split(",");
-    return {
-      zone: zone?.trim(),
-      address: address?.trim(),
-      order: Number(order)
-    };
-  }).filter(x=>x.address);
+  lines.forEach(l=>{
+    if(l.trim()){
+      master.push({
+        zone,
+        address: l.trim(),
+        order: master.length+1
+      });
+    }
+  });
 
+  updateZones();
+  renderMaster();
+}
+
+// ===== ゾーン更新 =====
+function updateZones(){
   zones = [...new Set(master.map(m=>m.zone))];
   currentZone = zones[0];
-
-  initTabs();
-  render();
-
-  alert(`読み込み完了：${master.length}件`);
-}
-
-// ===== ファイル =====
-function importCSVFile(){
-  const file = document.getElementById("csvFile").files[0];
-  if(!file) return alert("ファイル選択して");
-
-  const reader = new FileReader();
-  reader.onload = e => parseCSV(e.target.result);
-  reader.readAsText(file);
-}
-
-// ===== テキスト =====
-function importCSVText(){
-  const text = document.getElementById("csvText").value;
-  if(!text) return alert("テキスト入れて");
-
-  parseCSV(text);
+  renderTabs();
 }
 
 // ===== タブ =====
-function initTabs(){
+function renderTabs(){
+  const tabs = document.getElementById("tabs");
   tabs.innerHTML="";
 
   zones.forEach(z=>{
@@ -185,85 +183,107 @@ function initTabs(){
 
     div.onclick=()=>{
       currentZone=z;
-      renderTabs();
       render();
+      renderTabs();
     };
 
+    if(z===currentZone) div.classList.add("active");
     tabs.appendChild(div);
   });
-
-  renderTabs();
 }
 
-function renderTabs(){
-  [...tabs.children].forEach(tab=>{
-    tab.classList.toggle("active", tab.textContent===currentZone);
+// ===== マスタ表示（ドラッグ）=====
+function renderMaster(){
+  const box = document.getElementById("masterList");
+  box.innerHTML="";
+
+  master.forEach((m,i)=>{
+    const div=document.createElement("div");
+    div.className="item";
+    div.draggable=true;
+    div.textContent=`${m.zone} | ${m.address}`;
+
+    div.ondragstart=()=>div.classList.add("dragging");
+    div.ondragend=()=>{
+      div.classList.remove("dragging");
+      reOrder();
+    };
+
+    div.ondragover=e=>{
+      e.preventDefault();
+      const dragging=document.querySelector(".dragging");
+      if(dragging && dragging!==div){
+        box.insertBefore(dragging, div);
+      }
+    };
+
+    box.appendChild(div);
   });
 }
 
-// ===== サジェスト =====
-search.addEventListener("input", ()=>{
-  const val = normalize(search.value);
-  suggest.innerHTML="";
+// ===== order再採番 =====
+function reOrder(){
+  const items=[...document.querySelectorAll("#masterList .item")];
 
-  if(!val) return;
+  items.forEach((el,i)=>{
+    const text=el.textContent.split(" | ");
+    const zone=text[0];
+    const address=text[1];
+
+    const target=master.find(m=>m.address===address && m.zone===zone);
+    if(target) target.order=i+1;
+  });
+
+  master.sort((a,b)=>a.order-b.order);
+}
+
+// ===== CSV出力 =====
+function exportCSV(){
+  let csv="zone,order,address\n";
+  master.forEach(m=>{
+    csv+=`${m.zone},${m.order},${m.address}\n`;
+  });
+
+  navigator.clipboard.writeText(csv);
+  alert("コピーした！");
+}
+
+// ===== 配達側 =====
+document.getElementById("search").addEventListener("input", ()=>{
+  const val = search.value;
+  const suggest = document.getElementById("suggest");
+  suggest.innerHTML="";
 
   master
     .filter(m=>m.zone===currentZone && m.address.includes(val))
     .slice(0,10)
     .forEach(item=>{
-      const div=document.createElement("div");
-      div.textContent=item.address;
-      div.onclick=()=>addItem(item);
-      suggest.appendChild(div);
+      const d=document.createElement("div");
+      d.textContent=item.address;
+      d.onclick=()=>addItem(item);
+      suggest.appendChild(d);
     });
 });
 
-// ===== 追加 =====
 function addItem(item){
   if(!selected[currentZone]) selected[currentZone]=[];
-
-  if(selected[currentZone].find(s=>s.address===item.address)) return;
-
   selected[currentZone].push(item);
   selected[currentZone].sort((a,b)=>a.order-b.order);
-
-  save();
   render();
-
-  search.value="";
-  suggest.innerHTML="";
 }
 
-// ===== 表示 =====
 function render(){
+  const result=document.getElementById("result");
   result.innerHTML="";
 
-  const list = selected[currentZone] || [];
-
-  list.forEach((item,i)=>{
-    const div=document.createElement("div");
-    div.className="list-item";
-    div.textContent=`${i+1}. ${item.address}`;
-    result.appendChild(div);
+  (selected[currentZone]||[]).forEach((m,i)=>{
+    const d=document.createElement("div");
+    d.textContent=`${i+1}. ${m.address}`;
+    result.appendChild(d);
   });
 
-  zoneTitle.textContent = `配達順（${currentZone || "-" }）`;
+  document.getElementById("zoneTitle").textContent=`配達順（${currentZone||"-"}）`;
 }
-
-// ===== 保存 =====
-function save(){
-  localStorage.setItem("list",JSON.stringify(selected));
-}
-
-// ===== リセット =====
-function clearList(){
-  selected={};
-  save();
-  render();
-}
-
-render();
 
 </script>
 
