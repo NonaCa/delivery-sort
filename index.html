@@ -34,14 +34,6 @@ video {
   border-radius: 8px;
 }
 
-.result { margin-top: 10px; font-weight: bold; }
-
-.list div {
-  margin: 5px 0;
-  padding: 5px;
-  border-bottom: 1px solid #ddd;
-}
-
 #frame {
   position: absolute;
   top: 20%;
@@ -50,6 +42,14 @@ video {
   height: 40%;
   border: 2px solid red;
   pointer-events: none;
+}
+
+.result { margin-top: 10px; font-weight: bold; }
+
+.list div {
+  margin: 5px 0;
+  padding: 5px;
+  border-bottom: 1px solid #ddd;
 }
 </style>
 </head>
@@ -71,7 +71,6 @@ video {
 </div>
 
 <button onclick="capture()">📸 撮影</button>
-<button onclick="toggleCamera()" id="toggleBtn">⏸ 一時停止</button>
 
 <h3>③ 入力</h3>
 <input id="addressInput" placeholder="住所入力">
@@ -92,7 +91,6 @@ video {
 let master = [];
 let results = [];
 let stream;
-let isPaused = false;
 
 // カメラ起動（外カメラ優先）
 navigator.mediaDevices.getUserMedia({
@@ -106,36 +104,6 @@ navigator.mediaDevices.getUserMedia({
     document.getElementById("video").srcObject = stream;
   });
 });
-
-// 一時停止（フリーズ表示）
-function toggleCamera() {
-  if (!stream) return;
-
-  isPaused = !isPaused;
-
-  const video = document.getElementById("video");
-  const canvas = document.getElementById("freezeCanvas");
-
-  if (isPaused) {
-    const temp = document.createElement("canvas");
-    temp.width = video.videoWidth;
-    temp.height = video.videoHeight;
-
-    temp.getContext("2d").drawImage(video, 0, 0);
-
-    canvas.getContext("2d").drawImage(temp, 0, 0);
-
-    video.style.display = "none";
-    canvas.style.display = "block";
-
-    document.getElementById("toggleBtn").innerText = "▶ 再開";
-  } else {
-    video.style.display = "block";
-    canvas.style.display = "none";
-
-    document.getElementById("toggleBtn").innerText = "⏸ 一時停止";
-  }
-}
 
 // マスタ読込
 function loadCSV() {
@@ -153,16 +121,21 @@ function loadCSV() {
   alert("マスタ登録完了");
 }
 
-// 撮影→枠内OCR
+// 📷 OCR（精度強化版）
 async function capture() {
   const video = document.getElementById("video");
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  canvas.width = video.videoWidth * 0.8;
-  canvas.height = video.videoHeight * 0.4;
+  // ① 解像度UP
+  canvas.width = video.videoWidth * 1.5;
+  canvas.height = video.videoHeight * 1.5;
 
+  // ② コントラスト強化
+  ctx.filter = "contrast(2) brightness(1.2)";
+
+  // ③ 枠内切り抜き
   ctx.drawImage(
     video,
     video.videoWidth * 0.1,
@@ -185,12 +158,14 @@ async function capture() {
     return;
   }
 
-  document.getElementById("addressInput").value = addr;
+  const clean = normalize(addr);
 
-  showCandidates(addr);
+  document.getElementById("addressInput").value = clean;
+
+  showCandidates(clean);
 }
 
-// 候補表示
+// 候補表示（上位3件）
 function showCandidates(text) {
   const candidates = master
     .map(m => ({
@@ -200,14 +175,13 @@ function showCandidates(text) {
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
 
-  const html = candidates.map(c => `
-    <div>
-      ${c.order}. ${c.address}
-      <button onclick="selectCandidate(${c.order})">追加</button>
-    </div>
-  `).join("");
-
-  document.getElementById("candidates").innerHTML = html;
+  document.getElementById("candidates").innerHTML =
+    candidates.map(c => `
+      <div>
+        ${c.order}. ${c.address}
+        <button onclick="selectCandidate(${c.order})">追加</button>
+      </div>
+    `).join("");
 }
 
 // 候補選択
@@ -256,16 +230,20 @@ function updateList() {
     ).join("");
 }
 
-// 抽出
+// OCR抽出
 function extractAddress(text) {
   return text.split("\n").find(l =>
     (l.includes("区")||l.includes("市")) && /\d/.test(l)
   );
 }
 
-// 正規化
+// 正規化（OCR対策）
 function normalize(a){
-  return a.replace(/\s/g,"");
+  return a
+    .replace(/[ー－−]/g,"-")
+    .replace(/丁目/g,"-")
+    .replace(/番地/g,"-")
+    .replace(/\s/g,"");
 }
 
 // 類似度
