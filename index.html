@@ -6,71 +6,30 @@
 <title>配達ソート</title>
 
 <style>
-body {
-  margin: 0;
-  font-family: -apple-system;
-  background: #f2f2f7;
-}
-.container { padding: 12px; }
+body { margin:0; font-family:-apple-system; background:#f2f2f7;}
+.container { padding:12px;}
 
-.top-tabs { display:flex; }
-.top-tab {
-  flex:1;
-  padding:12px;
-  text-align:center;
-  background:#ddd;
-}
-.top-tab.active { background:#007aff;color:white; }
+.top-tabs { display:flex;}
+.top-tab { flex:1; padding:12px; text-align:center; background:#ddd;}
+.top-tab.active { background:#007aff;color:#fff;}
 
-.hidden { display:none; }
+.hidden{display:none;}
 
-.tabs { display:flex; overflow-x:auto; margin:8px 0; }
-.tab {
-  padding:8px 12px;
-  background:#ddd;
-  border-radius:10px;
-  margin-right:6px;
-}
-.tab.active { background:#007aff;color:white; }
+.tabs{display:flex;overflow-x:auto;margin:8px 0;}
+.tab{padding:8px 12px;background:#ddd;border-radius:10px;margin-right:6px;}
+.tab.active{background:#007aff;color:#fff;}
 
-.card {
-  background:white;
-  border-radius:12px;
-  padding:10px;
-  margin-bottom:10px;
-}
+.card{background:#fff;border-radius:12px;padding:10px;margin-bottom:10px;}
 
-input, textarea {
-  width:100%;
-  padding:10px;
-  border:none;
-}
+input,textarea{width:100%;padding:10px;border:none;}
+textarea{height:90px;}
 
-textarea { height:90px; }
+.item{padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;}
+.zone-block{margin-bottom:10px;}
+.zone-title{font-weight:bold;margin-bottom:4px;}
 
-.item {
-  padding:10px;
-  border-bottom:1px solid #eee;
-  display:flex;
-  justify-content:space-between;
-}
-
-button {
-  width:100%;
-  padding:12px;
-  border:none;
-  border-radius:10px;
-  background:#007aff;
-  color:white;
-  margin-top:6px;
-}
-
-.small-btn {
-  width:auto;
-  padding:6px 10px;
-  font-size:12px;
-  background:#ff3b30;
-}
+button{width:100%;padding:12px;border:none;border-radius:10px;background:#007aff;color:#fff;margin-top:6px;}
+.small-btn{width:auto;background:#ff3b30;padding:6px 10px;font-size:12px;}
 </style>
 </head>
 
@@ -89,7 +48,7 @@ button {
 <div id="tabs" class="tabs"></div>
 
 <div class="card">
-  <input id="search" placeholder="住所検索">
+  <input id="search" placeholder="住所検索（かなOK）">
   <div id="suggest"></div>
 </div>
 
@@ -117,11 +76,11 @@ button {
 
 <div class="card">
   <input id="zoneInput" placeholder="区間">
-  <textarea id="addressInput" placeholder="住所（改行で複数）"></textarea>
+  <textarea id="addressInput" placeholder="住所（改行）"></textarea>
   <button onclick="addMaster()">追加</button>
 </div>
 
-<div class="card" id="masterList"></div>
+<div id="masterList"></div>
 
 <button onclick="exportCSV()">CSVコピー</button>
 
@@ -132,138 +91,72 @@ button {
 <script>
 
 // ===== 状態 =====
-let master = [];
-let zones = [];
-let currentZone = "";
-let selected = {};
+let master = JSON.parse(localStorage.getItem("master")||"[]");
+let selected = JSON.parse(localStorage.getItem("selected")||"{}");
+let zones=[];
+let currentZone="";
 
-// ===== ページ切替 =====
-function switchPage(p){
-  document.getElementById("deliveryPage").classList.toggle("hidden", p!=="delivery");
-  document.getElementById("masterPage").classList.toggle("hidden", p!=="master");
-
-  document.querySelectorAll(".top-tab").forEach((t,i)=>{
-    t.classList.toggle("active", (p==="delivery"&&i===0)||(p==="master"&&i===1));
-  });
+// ===== かな変換 =====
+const hiraMap={"にし":"西","ひがし":"東","みなみ":"南","きた":"北","ほん":"本","じょう":"城"};
+function normalize(t){
+  Object.keys(hiraMap).forEach(k=>{ if(t.includes(k)) t=t.replace(k,hiraMap[k]); });
+  return t;
 }
 
-// ===== CSVパース =====
+// ===== 保存 =====
+function saveAll(){
+  localStorage.setItem("master",JSON.stringify(master));
+  localStorage.setItem("selected",JSON.stringify(selected));
+}
+
+// ===== CSV =====
 function parseCSV(text){
-  const lines = text.trim().split("\n");
-  const header = lines[0].split(",");
+  const lines=text.trim().split("\n");
+  const h=lines[0].split(",");
+  const zi=h.indexOf("zone"), oi=h.indexOf("order"), ai=h.indexOf("address");
 
-  const zi = header.indexOf("zone");
-  const oi = header.indexOf("order");
-  const ai = header.indexOf("address");
-
-  master = lines.slice(1).map(l=>{
-    const c = l.split(",");
-    return {
-      zone: c[zi]?.trim(),
-      order: Number(c[oi]),
-      address: c[ai]?.trim()
-    };
+  master=lines.slice(1).map(l=>{
+    const c=l.split(",");
+    return {zone:c[zi],order:Number(c[oi]),address:c[ai]};
   }).filter(x=>x.address);
 
   updateZones();
   renderMaster();
   render();
+  saveAll();
 }
 
-// ===== CSV入力 =====
 function importCSVFile(){
-  const f = document.getElementById("csvFile").files[0];
-  const r = new FileReader();
-  r.onload = e=>parseCSV(e.target.result);
+  const f=document.getElementById("csvFile").files[0];
+  const r=new FileReader();
+  r.onload=e=>parseCSV(e.target.result);
   r.readAsText(f);
 }
 
 function importCSVText(){
-  const t = document.getElementById("csvText").value;
-  parseCSV(t);
+  parseCSV(document.getElementById("csvText").value);
 }
 
 // ===== マスタ追加 =====
 function addMaster(){
-  const z = document.getElementById("zoneInput").value;
-  const lines = document.getElementById("addressInput").value.split("\n");
+  const z=document.getElementById("zoneInput").value;
+  const lines=document.getElementById("addressInput").value.split("\n");
 
   lines.forEach(l=>{
     if(l.trim()){
-      master.push({
-        zone:z,
-        address:l.trim(),
-        order: master.length+1
-      });
+      master.push({zone:z,address:l.trim(),order:master.length+1});
     }
   });
 
   updateZones();
   renderMaster();
-}
-
-// ===== 削除 =====
-function deleteItem(zone,address){
-  master = master.filter(m=>!(m.zone===zone && m.address===address));
-  reOrder();
-  renderMaster();
-}
-
-// ===== 並び替え =====
-function renderMaster(){
-  const box=document.getElementById("masterList");
-  box.innerHTML="";
-
-  master.forEach(m=>{
-    const div=document.createElement("div");
-    div.className="item";
-    div.draggable=true;
-    div.innerHTML=`${m.zone} | ${m.address}
-      <button class="small-btn" onclick="deleteItem('${m.zone}','${m.address}')">削除</button>`;
-
-    div.ondragstart=()=>div.classList.add("dragging");
-    div.ondragend=()=>{div.classList.remove("dragging"); reOrder();};
-
-    div.ondragover=e=>{
-      e.preventDefault();
-      const dragging=document.querySelector(".dragging");
-      if(dragging && dragging!==div){
-        box.insertBefore(dragging,div);
-      }
-    };
-
-    box.appendChild(div);
-  });
-}
-
-function reOrder(){
-  const items=[...document.querySelectorAll("#masterList .item")];
-
-  items.forEach((el,i)=>{
-    const txt=el.firstChild.textContent.split(" | ");
-    const z=txt[0], a=txt[1];
-
-    const t=master.find(m=>m.zone===z && m.address===a);
-    if(t) t.order=i+1;
-  });
-
-  master.sort((a,b)=>a.order-b.order);
-}
-
-// ===== CSV出力 =====
-function exportCSV(){
-  let csv="zone,order,address\n";
-  master.forEach(m=>{
-    csv+=`${m.zone},${m.order},${m.address}\n`;
-  });
-  navigator.clipboard.writeText(csv);
-  alert("コピー完了");
+  saveAll();
 }
 
 // ===== ゾーン =====
 function updateZones(){
   zones=[...new Set(master.map(m=>m.zone))];
-  currentZone=zones[0];
+  currentZone=currentZone||zones[0];
   renderTabs();
 }
 
@@ -280,12 +173,83 @@ function renderTabs(){
   });
 }
 
+// ===== マスタ表示（ゾーン別）=====
+function renderMaster(){
+  const box=document.getElementById("masterList");
+  box.innerHTML="";
+
+  zones.forEach(z=>{
+    const block=document.createElement("div");
+    block.className="card zone-block";
+
+    const title=document.createElement("div");
+    title.className="zone-title";
+    title.textContent=`区間 ${z}`;
+    block.appendChild(title);
+
+    master.filter(m=>m.zone===z).sort((a,b)=>a.order-b.order).forEach(m=>{
+      const div=document.createElement("div");
+      div.className="item";
+      div.draggable=true;
+
+      div.innerHTML=`${m.address}
+        <button class="small-btn" onclick="deleteItem('${z}','${m.address}')">削除</button>`;
+
+      div.ondragstart=()=>div.classList.add("dragging");
+      div.ondragend=()=>{div.classList.remove("dragging"); reOrder(z);};
+
+      div.ondragover=e=>{
+        e.preventDefault();
+        const dragging=document.querySelector(".dragging");
+        if(dragging && dragging!==div){
+          block.insertBefore(dragging,div.nextSibling);
+        }
+      };
+
+      block.appendChild(div);
+    });
+
+    box.appendChild(block);
+  });
+}
+
+// ===== 並び替え（ゾーン単位）=====
+function reOrder(zone){
+  const items=[...document.querySelectorAll(".zone-block")].find(b=>b.textContent.includes(zone));
+  if(!items)return;
+
+  const list=[...items.querySelectorAll(".item")];
+  list.forEach((el,i)=>{
+    const addr=el.firstChild.textContent.trim();
+    const t=master.find(m=>m.zone===zone && m.address===addr);
+    if(t) t.order=i+1;
+  });
+
+  saveAll();
+}
+
+// ===== 削除 =====
+function deleteItem(z,a){
+  master=master.filter(m=>!(m.zone===z && m.address===a));
+  updateZones();
+  renderMaster();
+  saveAll();
+}
+
+// ===== CSV出力 =====
+function exportCSV(){
+  let csv="zone,order,address\n";
+  master.forEach(m=>csv+=`${m.zone},${m.order},${m.address}\n`);
+  navigator.clipboard.writeText(csv);
+  alert("コピー完了");
+}
+
 // ===== 配達 =====
 search.addEventListener("input", ()=>{
-  const val=search.value;
+  const val=normalize(search.value);
   suggest.innerHTML="";
-  master
-    .filter(m=>m.zone===currentZone && m.address.includes(val))
+
+  master.filter(m=>m.zone===currentZone && m.address.includes(val))
     .slice(0,10)
     .forEach(item=>{
       const d=document.createElement("div");
@@ -299,6 +263,7 @@ function addItem(item){
   if(!selected[currentZone]) selected[currentZone]=[];
   selected[currentZone].push(item);
   selected[currentZone].sort((a,b)=>a.order-b.order);
+  saveAll();
   render();
 }
 
@@ -311,6 +276,20 @@ function render(){
   });
   zoneTitle.textContent=`配達順（${currentZone||"-"}）`;
 }
+
+// ===== ページ切替 =====
+function switchPage(p){
+  deliveryPage.classList.toggle("hidden",p!=="delivery");
+  masterPage.classList.toggle("hidden",p!=="master");
+  document.querySelectorAll(".top-tab").forEach((t,i)=>{
+    t.classList.toggle("active",(p==="delivery"&&i===0)||(p==="master"&&i===1));
+  });
+}
+
+// 初期化
+updateZones();
+renderMaster();
+render();
 
 </script>
 
