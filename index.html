@@ -38,6 +38,11 @@ textarea{height:90px;}
   font-size:18px;
   margin-right:10px;
   cursor:grab;
+
+  /* ★これが超重要 */
+  user-select:none;
+  -webkit-user-select:none;
+  touch-action:none;
 }
 
 .dragging{
@@ -126,6 +131,7 @@ let master = JSON.parse(localStorage.getItem("master")||"[]");
 let selected = JSON.parse(localStorage.getItem("selected")||"{}");
 let zones=[];
 let currentZone="";
+let draggingEl=null;
 
 const hiraMap={"にし":"西","ひがし":"東","みなみ":"南","きた":"北"};
 function normalize(t){
@@ -200,8 +206,6 @@ function renderTabs(){
 }
 
 // ===== ドラッグ修正版 =====
-let draggingEl = null;
-
 function renderMaster(){
   const box=document.getElementById("masterList");
   box.innerHTML="";
@@ -215,9 +219,7 @@ function renderMaster(){
     title.textContent=`区間 ${z}`;
     block.appendChild(title);
 
-    const list = master.filter(m=>m.zone===z).sort((a,b)=>a.order-b.order);
-
-    list.forEach(m=>{
+    master.filter(m=>m.zone===z).sort((a,b)=>a.order-b.order).forEach(m=>{
       const div=document.createElement("div");
       div.className="item";
 
@@ -225,10 +227,14 @@ function renderMaster(){
       handle.className="handle";
       handle.textContent="≡";
 
+      // ★テキスト選択完全防止
+      handle.onmousedown = e => e.preventDefault();
+      handle.ontouchstart = e => e.preventDefault();
+
       handle.draggable=true;
 
-      handle.ondragstart=(e)=>{
-        draggingEl = div;
+      handle.ondragstart=()=>{
+        draggingEl=div;
         div.classList.add("dragging");
       };
 
@@ -238,18 +244,17 @@ function renderMaster(){
         reOrder(z);
       };
 
-      div.ondragover=(e)=>{
+      div.ondragover=e=>{
         e.preventDefault();
-        const target = div;
-        if(!draggingEl || draggingEl===target) return;
+        if(!draggingEl || draggingEl===div) return;
 
-        const rect = target.getBoundingClientRect();
-        const offset = e.clientY - rect.top;
+        const rect=div.getBoundingClientRect();
+        const offset=e.clientY-rect.top;
 
-        if(offset > rect.height / 2){
-          target.after(draggingEl);
+        if(offset>rect.height/2){
+          div.after(draggingEl);
         }else{
-          target.before(draggingEl);
+          div.before(draggingEl);
         }
       };
 
@@ -274,8 +279,8 @@ function renderMaster(){
 }
 
 function reOrder(zone){
-  const blocks=[...document.querySelectorAll(".zone-block")];
-  const block=blocks.find(b=>b.innerText.includes(zone));
+  const block=[...document.querySelectorAll(".zone-block")]
+    .find(b=>b.innerText.includes(zone));
   if(!block) return;
 
   const items=[...block.querySelectorAll(".item")];
