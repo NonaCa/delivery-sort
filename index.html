@@ -11,74 +11,65 @@ body {
   font-family: -apple-system;
   background: #f2f2f7;
 }
-
 .container { padding: 12px; }
 
-.top-tabs {
-  display: flex;
-  margin-bottom: 10px;
-}
-
+.top-tabs { display:flex; }
 .top-tab {
-  flex: 1;
-  padding: 12px;
-  text-align: center;
-  background: #ddd;
+  flex:1;
+  padding:12px;
+  text-align:center;
+  background:#ddd;
 }
+.top-tab.active { background:#007aff;color:white; }
 
-.top-tab.active {
-  background: #007aff;
-  color: white;
-}
+.hidden { display:none; }
 
-.hidden { display: none; }
-
-.tabs {
-  display: flex;
-  overflow-x: auto;
-  margin-bottom: 10px;
-}
-
+.tabs { display:flex; overflow-x:auto; margin:8px 0; }
 .tab {
-  padding: 8px 12px;
-  background: #ddd;
-  border-radius: 10px;
-  margin-right: 6px;
+  padding:8px 12px;
+  background:#ddd;
+  border-radius:10px;
+  margin-right:6px;
 }
-
-.tab.active { background:#007aff; color:white; }
+.tab.active { background:#007aff;color:white; }
 
 .card {
-  background: white;
-  border-radius: 12px;
-  padding: 10px;
-  margin-bottom: 10px;
+  background:white;
+  border-radius:12px;
+  padding:10px;
+  margin-bottom:10px;
 }
 
 input, textarea {
-  width: 100%;
-  padding: 10px;
-  border: none;
+  width:100%;
+  padding:10px;
+  border:none;
 }
 
-textarea { height: 80px; }
+textarea { height:90px; }
 
 .item {
-  padding: 10px;
-  border-bottom: 1px solid #eee;
-  background: white;
+  padding:10px;
+  border-bottom:1px solid #eee;
+  display:flex;
+  justify-content:space-between;
 }
 
-.dragging { opacity: 0.5; }
-
 button {
-  width: 100%;
-  padding: 12px;
-  border: none;
-  border-radius: 10px;
-  background: #007aff;
-  color: white;
-  margin-top: 6px;
+  width:100%;
+  padding:12px;
+  border:none;
+  border-radius:10px;
+  background:#007aff;
+  color:white;
+  margin-top:6px;
+}
+
+.small-btn {
+  width:auto;
+  padding:6px 10px;
+  font-size:12px;
+  background:#ff3b30;
 }
 </style>
 </head>
@@ -87,13 +78,12 @@ button {
 
 <div class="container">
 
-<!-- 上位タブ -->
 <div class="top-tabs">
   <div class="top-tab active" onclick="switchPage('delivery')">🚚 配達</div>
   <div class="top-tab" onclick="switchPage('master')">🛠️ マスタ作成</div>
 </div>
 
-<!-- 配達画面 -->
+<!-- 配達 -->
 <div id="deliveryPage">
 
 <div id="tabs" class="tabs"></div>
@@ -110,12 +100,24 @@ button {
 
 </div>
 
-<!-- マスタ作成 -->
+<!-- マスタ -->
 <div id="masterPage" class="hidden">
 
 <div class="card">
-  <input id="zoneInput" placeholder="区間（例:A）">
-  <textarea id="addressInput" placeholder="住所を改行で入力"></textarea>
+  <div>📂 CSVファイル</div>
+  <input type="file" id="csvFile">
+  <button onclick="importCSVFile()">読み込み</button>
+</div>
+
+<div class="card">
+  <div>✏️ CSVテキスト</div>
+  <textarea id="csvText"></textarea>
+  <button onclick="importCSVText()">読み込み</button>
+</div>
+
+<div class="card">
+  <input id="zoneInput" placeholder="区間">
+  <textarea id="addressInput" placeholder="住所（改行で複数）"></textarea>
   <button onclick="addMaster()">追加</button>
 </div>
 
@@ -141,20 +143,56 @@ function switchPage(p){
   document.getElementById("masterPage").classList.toggle("hidden", p!=="master");
 
   document.querySelectorAll(".top-tab").forEach((t,i)=>{
-    t.classList.toggle("active", (p==="delivery" && i===0) || (p==="master" && i===1));
+    t.classList.toggle("active", (p==="delivery"&&i===0)||(p==="master"&&i===1));
   });
+}
+
+// ===== CSVパース =====
+function parseCSV(text){
+  const lines = text.trim().split("\n");
+  const header = lines[0].split(",");
+
+  const zi = header.indexOf("zone");
+  const oi = header.indexOf("order");
+  const ai = header.indexOf("address");
+
+  master = lines.slice(1).map(l=>{
+    const c = l.split(",");
+    return {
+      zone: c[zi]?.trim(),
+      order: Number(c[oi]),
+      address: c[ai]?.trim()
+    };
+  }).filter(x=>x.address);
+
+  updateZones();
+  renderMaster();
+  render();
+}
+
+// ===== CSV入力 =====
+function importCSVFile(){
+  const f = document.getElementById("csvFile").files[0];
+  const r = new FileReader();
+  r.onload = e=>parseCSV(e.target.result);
+  r.readAsText(f);
+}
+
+function importCSVText(){
+  const t = document.getElementById("csvText").value;
+  parseCSV(t);
 }
 
 // ===== マスタ追加 =====
 function addMaster(){
-  const zone = document.getElementById("zoneInput").value;
+  const z = document.getElementById("zoneInput").value;
   const lines = document.getElementById("addressInput").value.split("\n");
 
   lines.forEach(l=>{
     if(l.trim()){
       master.push({
-        zone,
-        address: l.trim(),
+        zone:z,
+        address:l.trim(),
         order: master.length+1
       });
     }
@@ -164,56 +202,33 @@ function addMaster(){
   renderMaster();
 }
 
-// ===== ゾーン更新 =====
-function updateZones(){
-  zones = [...new Set(master.map(m=>m.zone))];
-  currentZone = zones[0];
-  renderTabs();
+// ===== 削除 =====
+function deleteItem(zone,address){
+  master = master.filter(m=>!(m.zone===zone && m.address===address));
+  reOrder();
+  renderMaster();
 }
 
-// ===== タブ =====
-function renderTabs(){
-  const tabs = document.getElementById("tabs");
-  tabs.innerHTML="";
-
-  zones.forEach(z=>{
-    const div=document.createElement("div");
-    div.className="tab";
-    div.textContent=z;
-
-    div.onclick=()=>{
-      currentZone=z;
-      render();
-      renderTabs();
-    };
-
-    if(z===currentZone) div.classList.add("active");
-    tabs.appendChild(div);
-  });
-}
-
-// ===== マスタ表示（ドラッグ）=====
+// ===== 並び替え =====
 function renderMaster(){
-  const box = document.getElementById("masterList");
+  const box=document.getElementById("masterList");
   box.innerHTML="";
 
-  master.forEach((m,i)=>{
+  master.forEach(m=>{
     const div=document.createElement("div");
     div.className="item";
     div.draggable=true;
-    div.textContent=`${m.zone} | ${m.address}`;
+    div.innerHTML=`${m.zone} | ${m.address}
+      <button class="small-btn" onclick="deleteItem('${m.zone}','${m.address}')">削除</button>`;
 
     div.ondragstart=()=>div.classList.add("dragging");
-    div.ondragend=()=>{
-      div.classList.remove("dragging");
-      reOrder();
-    };
+    div.ondragend=()=>{div.classList.remove("dragging"); reOrder();};
 
     div.ondragover=e=>{
       e.preventDefault();
       const dragging=document.querySelector(".dragging");
       if(dragging && dragging!==div){
-        box.insertBefore(dragging, div);
+        box.insertBefore(dragging,div);
       }
     };
 
@@ -221,17 +236,15 @@ function renderMaster(){
   });
 }
 
-// ===== order再採番 =====
 function reOrder(){
   const items=[...document.querySelectorAll("#masterList .item")];
 
   items.forEach((el,i)=>{
-    const text=el.textContent.split(" | ");
-    const zone=text[0];
-    const address=text[1];
+    const txt=el.firstChild.textContent.split(" | ");
+    const z=txt[0], a=txt[1];
 
-    const target=master.find(m=>m.address===address && m.zone===zone);
-    if(target) target.order=i+1;
+    const t=master.find(m=>m.zone===z && m.address===a);
+    if(t) t.order=i+1;
   });
 
   master.sort((a,b)=>a.order-b.order);
@@ -243,17 +256,34 @@ function exportCSV(){
   master.forEach(m=>{
     csv+=`${m.zone},${m.order},${m.address}\n`;
   });
-
   navigator.clipboard.writeText(csv);
-  alert("コピーした！");
+  alert("コピー完了");
 }
 
-// ===== 配達側 =====
-document.getElementById("search").addEventListener("input", ()=>{
-  const val = search.value;
-  const suggest = document.getElementById("suggest");
-  suggest.innerHTML="";
+// ===== ゾーン =====
+function updateZones(){
+  zones=[...new Set(master.map(m=>m.zone))];
+  currentZone=zones[0];
+  renderTabs();
+}
 
+function renderTabs(){
+  const tabs=document.getElementById("tabs");
+  tabs.innerHTML="";
+  zones.forEach(z=>{
+    const d=document.createElement("div");
+    d.className="tab";
+    d.textContent=z;
+    if(z===currentZone)d.classList.add("active");
+    d.onclick=()=>{currentZone=z; render(); renderTabs();};
+    tabs.appendChild(d);
+  });
+}
+
+// ===== 配達 =====
+search.addEventListener("input", ()=>{
+  const val=search.value;
+  suggest.innerHTML="";
   master
     .filter(m=>m.zone===currentZone && m.address.includes(val))
     .slice(0,10)
@@ -273,16 +303,13 @@ function addItem(item){
 }
 
 function render(){
-  const result=document.getElementById("result");
   result.innerHTML="";
-
   (selected[currentZone]||[]).forEach((m,i)=>{
     const d=document.createElement("div");
     d.textContent=`${i+1}. ${m.address}`;
     result.appendChild(d);
   });
-
-  document.getElementById("zoneTitle").textContent=`配達順（${currentZone||"-"}）`;
+  zoneTitle.textContent=`配達順（${currentZone||"-"}）`;
 }
 
 </script>
