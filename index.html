@@ -6,15 +6,12 @@
 <title>配達ソート</title>
 
 <style>
-body { font-family: -apple-system; background:#f6f6f6; padding:10px; }
+body { font-family:-apple-system; background:#f6f6f6; padding:10px; }
 section { background:#fff; padding:10px; margin-bottom:10px; border-radius:10px; }
 
 video, canvas.preview {
-  width:100%;
-  height:35vh;
-  object-fit:cover;
-  border-radius:10px;
-  background:#000;
+  width:100%; height:35vh; object-fit:cover;
+  border-radius:10px; background:#000;
 }
 
 button {
@@ -26,6 +23,15 @@ button {
 .item {
   background:#eee; margin-top:6px; padding:10px;
   border-radius:8px; display:flex; justify-content:space-between;
+}
+
+.small-btn {
+  background:#ff3b30; width:auto; padding:6px 10px;
+}
+
+textarea, input {
+  width:100%; padding:10px; margin-top:6px;
+  border-radius:8px; border:1px solid #ccc;
 }
 
 #status {
@@ -45,17 +51,41 @@ button {
 <div id="nextHint"></div>
 </section>
 
+<!-- マスタ -->
 <section>
+<h3>マスタ</h3>
+<textarea id="csvInput"></textarea>
+<button onclick="loadCSV()">マスタ読込</button>
+</section>
+
+<!-- カメラ -->
+<section>
+<h3>カメラ</h3>
 <video id="video" autoplay playsinline></video>
 <canvas id="freeze" class="preview" style="display:none;"></canvas>
 
 <button onclick="startCamera()">📷 カメラ起動</button>
-<button onclick="capture()">📸 読み取り</button>
+<button id="scanBtn" onclick="capture()">📸 読み取り</button>
 <button onclick="resumeCamera()">▶ カメラ戻す</button>
 </section>
 
+<!-- 手動 -->
 <section>
+<h3>入力</h3>
+<input id="addressInput" placeholder="住所">
+<button onclick="addManual()">追加</button>
+</section>
+
+<!-- 候補 -->
+<section>
+<h3>候補</h3>
 <div id="candidates"></div>
+</section>
+
+<!-- リスト -->
+<section>
+<h3>配達リスト</h3>
+<div id="list"></div>
 </section>
 
 <div id="status"></div>
@@ -63,15 +93,27 @@ button {
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
 
 <script>
+let master=[];
+let results=[];
 let stream=null;
-let master=[
-  {order:1,address:"西新宿1-1-1",key:"西新宿1-1-1"},
-  {order:2,address:"渋谷2-2-2",key:"渋谷2-2-2"},
-  {order:3,address:"六本木3-3-3",key:"六本木3-3-3"}
-];
+let scanning=false;
 
-function showStatus(t){
+/* 初期マスタ */
+const defaultMaster=`
+1,東京都新宿区西新宿1-1-1
+2,東京都渋谷区渋谷2-2-2
+3,東京都港区六本木3-3-3
+`.trim();
+
+csvInput.value=defaultMaster;
+loadCSV();
+
+/* ステータス */
+function showStatus(t,type=""){
   status.innerText=t;
+  status.style.background =
+    type==="error"?"#ff3b30":
+    type==="ok"?"#34c759":"#111";
   status.style.opacity=1;
   setTimeout(()=>status.style.opacity=0,1500);
 }
@@ -82,14 +124,19 @@ function startCamera(){
   .then(s=>{
     stream=s;
     video.srcObject=s;
-    showStatus("カメラON");
+    showStatus("カメラON","ok");
   })
-  .catch(()=>showStatus("カメラ許可して"));
+  .catch(()=>showStatus("カメラ許可して","error"));
 }
 
-/* 静止画取得 */
+/* 静止画 + OCR */
 async function capture(){
-  if(!stream){ showStatus("カメラ起動して"); return; }
+  if(!stream){ showStatus("カメラ起動して","error"); return; }
+  if(scanning) return;
+  scanning=true;
+
+  scanBtn.innerText="読み取り中…";
+  scanBtn.disabled=true;
 
   const canvas=freeze;
   const ctx=canvas.getContext("2d");
@@ -104,22 +151,50 @@ async function capture(){
 
   showStatus("この画像を解析中…");
 
-  const {data:{text}}=await Tesseract.recognize(canvas,"jpn");
+  try{
+    const {data:{text}}=await Tesseract.recognize(canvas,"jpn");
 
-  const addr = text.split("\n").find(l=>/\d/.test(l));
-  if(!addr){
-    showStatus("読めない");
-    return;
+    const addr=extract(text);
+    if(!addr){
+      showStatus("読めなかった","error");
+      resetBtn();
+      scanning=false;
+      return;
+    }
+
+    const clean=normalize(addr);
+    addressInput.value=clean;
+
+    navigator.vibrate?.(50);
+    showStatus("OK","ok");
+
+    showCandidates(clean);
+
+  }catch{
+    showStatus("OCRエラー","error");
   }
 
-  const clean = normalize(addr);
-  showCandidates(clean);
+  resetBtn();
+  scanning=false;
 }
 
-/* カメラ戻す */
+/* 戻す */
 function resumeCamera(){
   video.style.display="block";
   freeze.style.display="none";
+}
+
+/* マスタ */
+function loadCSV(){
+  master=csvInput.value.split("\n").map(l=>{
+    const [order,address]=l.split(",");
+    return {
+      order:parseInt(order),
+      address,
+      key:normalize(address)
+    };
+  });
+  showStatus("マスタOK","ok");
 }
 
 /* 正規化 */
@@ -127,33 +202,102 @@ function normalize(a){
   return a
     .replace(/[０-９]/g,s=>String.fromCharCode(s.charCodeAt(0)-65248))
     .replace(/丁目|番|号/g,"-")
-    .replace(/\s/g,"");
+    .replace(/東京都|.+?区|.+?市/g,"")
+    .replace(/\s/g,"")
+    .replace(/-+/g,"-");
+}
+
+/* 抽出 */
+function extract(t){
+  return t.split("\n").find(l=>
+    (l.includes("区")||l.includes("市")) && /\d/.test(l)
+  );
+}
+
+/* スコア */
+function matchScore(a,b){
+  if(a===b) return 100;
+  let s=0;
+  const na=a.match(/\d+/g)||[];
+  const nb=b.match(/\d+/g)||[];
+  s+=na.filter(n=>nb.includes(n)).length*10;
+  if(b.includes(a)) s+=20;
+  return s;
 }
 
 /* 候補 */
-function showCandidates(t){
+function showCandidates(text){
   const list=master
-    .map(m=>({...m,score:score(t,m.key)}))
+    .map(m=>({...m,score:matchScore(text,m.key)}))
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
 
   candidates.innerHTML=list.map(c=>`
-    <div class="item">${c.address}</div>
+    <div class="item">
+      <div>${c.order}. ${c.address}</div>
+      <button onclick="select(${c.order})">追加</button>
+    </div>
   `).join("");
 }
 
-/* スコア */
-function score(a,b){
-  if(a===b) return 100;
-  let s=0;
+/* 選択 */
+function select(order){
+  const m=master.find(x=>x.order===order);
+  if(!results.find(r=>r.order===order)){
+    results.push(m);
+    update();
+  }
+  candidates.innerHTML="";
+}
 
-  const na=a.match(/\d+/g)||[];
-  const nb=b.match(/\d+/g)||[];
+/* 手動 */
+function addManual(){
+  const clean=normalize(addressInput.value);
 
-  s+=na.filter(n=>nb.includes(n)).length*10;
-  if(b.includes(a)) s+=20;
+  const m=master
+    .map(m=>({...m,score:matchScore(clean,m.key)}))
+    .sort((a,b)=>b.score-a.score)[0];
 
-  return s;
+  if(m && !results.find(r=>r.order===m.order)){
+    results.push(m);
+    update();
+  }
+
+  addressInput.value="";
+}
+
+/* 削除 */
+function remove(order){
+  results=results.filter(r=>r.order!==order);
+  update();
+}
+
+/* 更新 */
+function update(){
+  results.sort((a,b)=>a.order-b.order);
+
+  list.innerHTML=results.map(r=>`
+    <div class="item">
+      <div>${r.order}. ${r.address}</div>
+      <button class="small-btn" onclick="remove(${r.order})">削除</button>
+    </div>
+  `).join("");
+
+  updateNext();
+}
+
+/* 次 */
+function updateNext(){
+  const remaining=master.filter(m=>!results.find(r=>r.order===m.order));
+  nextHint.innerText=remaining.length
+    ? "次: "+remaining.sort((a,b)=>a.order-b.order)[0].address
+    : "完了 🎉";
+}
+
+/* ボタン戻し */
+function resetBtn(){
+  scanBtn.innerText="📸 読み取り";
+  scanBtn.disabled=false;
 }
 </script>
 
