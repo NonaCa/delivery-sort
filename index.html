@@ -27,13 +27,6 @@ video {
   border-radius: 8px;
 }
 
-#freezeCanvas {
-  width: 100%;
-  height: 40vh;
-  display: none;
-  border-radius: 8px;
-}
-
 #frame {
   position: absolute;
   top: 20%;
@@ -58,15 +51,14 @@ video {
 
 <h2>配達ソート</h2>
 
-<h3>① マスタCSV</h3>
-<textarea id="csvInput" placeholder="1,東京都新宿区西新宿1-1-1"></textarea>
-<button onclick="loadCSV()">マスタ読込</button>
+<h3>① マスタCSV（編集可）</h3>
+<textarea id="csvInput"></textarea>
+<button onclick="loadCSV()">マスタ再読込</button>
 
 <h3>② カメラ</h3>
 
 <div style="position:relative;">
 <video id="video" autoplay playsinline></video>
-<canvas id="freezeCanvas"></canvas>
 <div id="frame"></div>
 </div>
 
@@ -90,22 +82,45 @@ video {
 
 let master = [];
 let results = [];
-let stream;
 
-// カメラ起動（外カメラ優先）
+/* -----------------------
+   🔥 初期マスタ（10件）
+------------------------*/
+const defaultMaster = `
+1,東京都新宿区西新宿1-1-1
+2,東京都渋谷区渋谷2-2-2
+3,東京都港区六本木3-3-3
+4,東京都千代田区丸の内1-4-1
+5,東京都中央区銀座5-5-5
+6,東京都品川区大崎1-6-1
+7,東京都目黒区青葉台1-1-1
+8,東京都世田谷区三軒茶屋2-10-1
+9,東京都豊島区南池袋1-28-2
+10,東京都台東区上野4-10-5
+11,東京都千代田区大手町二丁目3番1号
+`.trim();
+
+// 初期表示
+document.getElementById("csvInput").value = defaultMaster;
+loadCSV();
+
+/* -----------------------
+   カメラ起動
+------------------------*/
 navigator.mediaDevices.getUserMedia({
   video: { facingMode: { exact: "environment" } }
 }).then(s => {
-  stream = s;
-  document.getElementById("video").srcObject = stream;
+  document.getElementById("video").srcObject = s;
 }).catch(() => {
-  navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
-    stream = s;
-    document.getElementById("video").srcObject = stream;
+  navigator.mediaDevices.getUserMedia({ video: true })
+  .then(s => {
+    document.getElementById("video").srcObject = s;
   });
 });
 
-// マスタ読込
+/* -----------------------
+   マスタ読込
+------------------------*/
 function loadCSV() {
   const text = document.getElementById("csvInput").value;
 
@@ -118,24 +133,23 @@ function loadCSV() {
     };
   });
 
-  alert("マスタ登録完了");
+  alert("マスタ更新完了");
 }
 
-// 📷 OCR（精度強化版）
+/* -----------------------
+   OCR
+------------------------*/
 async function capture() {
   const video = document.getElementById("video");
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  // ① 解像度UP
   canvas.width = video.videoWidth * 1.5;
   canvas.height = video.videoHeight * 1.5;
 
-  // ② コントラスト強化
   ctx.filter = "contrast(2) brightness(1.2)";
 
-  // ③ 枠内切り抜き
   ctx.drawImage(
     video,
     video.videoWidth * 0.1,
@@ -165,7 +179,9 @@ async function capture() {
   showCandidates(clean);
 }
 
-// 候補表示（上位3件）
+/* -----------------------
+   候補
+------------------------*/
 function showCandidates(text) {
   const candidates = master
     .map(m => ({
@@ -184,7 +200,6 @@ function showCandidates(text) {
     `).join("");
 }
 
-// 候補選択
 function selectCandidate(order) {
   const m = master.find(x => x.order === order);
   if (!m) return;
@@ -198,7 +213,9 @@ function selectCandidate(order) {
   document.getElementById("candidates").innerHTML = "";
 }
 
-// 手動追加
+/* -----------------------
+   手動追加
+------------------------*/
 function addManual() {
   const val = document.getElementById("addressInput").value;
   const m = master.find(x => val.includes(x.address));
@@ -213,13 +230,17 @@ function addManual() {
   document.getElementById("addressInput").value = "";
 }
 
-// 削除
+/* -----------------------
+   削除
+------------------------*/
 function removeItem(order) {
   results = results.filter(r => r.order !== order);
   updateList();
 }
 
-// リスト更新
+/* -----------------------
+   リスト更新
+------------------------*/
 function updateList() {
   const sorted = results.sort((a,b)=>a.order-b.order);
 
@@ -230,14 +251,15 @@ function updateList() {
     ).join("");
 }
 
-// OCR抽出
+/* -----------------------
+   OCR補助
+------------------------*/
 function extractAddress(text) {
   return text.split("\n").find(l =>
     (l.includes("区")||l.includes("市")) && /\d/.test(l)
   );
 }
 
-// 正規化（OCR対策）
 function normalize(a){
   return a
     .replace(/[ー－−]/g,"-")
@@ -246,7 +268,6 @@ function normalize(a){
     .replace(/\s/g,"");
 }
 
-// 類似度
 function similarity(a,b){
   let m=0;
   for(let i=0;i<Math.min(a.length,b.length);i++){
