@@ -2,79 +2,123 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>配達ソート</title>
 
 <style>
-body { font-family: sans-serif; padding: 10px; }
-
-button {
-  font-size: 16px;
+body {
+  font-family: -apple-system, sans-serif;
+  margin: 0;
   padding: 10px;
-  margin: 5px 0;
+  background: #f6f6f6;
+  color: #111;
 }
 
+/* 全体をカード風 */
+section {
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+}
+
+/* ボタン大きく（現場用） */
+button {
+  width: 100%;
+  font-size: 18px;
+  padding: 14px;
+  margin-top: 6px;
+  border: none;
+  border-radius: 8px;
+  background: #007aff;
+  color: #fff;
+}
+
+/* 入力 */
 textarea, input {
   width: 100%;
   font-size: 16px;
-  padding: 8px;
+  padding: 10px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid #ccc;
 }
 
+/* カメラ */
 video {
   width: 100%;
-  height: 40vh;
+  height: 35vh;
   object-fit: cover;
+  border-radius: 10px;
   background: #000;
+}
+
+/* 候補・リスト */
+.item {
+  padding: 10px;
+  margin-top: 6px;
   border-radius: 8px;
+  background: #f1f1f1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 15px;
 }
 
-#frame {
-  position: absolute;
-  top: 20%;
-  left: 10%;
-  width: 80%;
-  height: 40%;
-  border: 2px solid red;
-  pointer-events: none;
+.small-btn {
+  width: auto;
+  padding: 8px 10px;
+  font-size: 14px;
+  background: #ff3b30;
 }
 
-.result { margin-top: 10px; font-weight: bold; }
-
-.list div {
+/* 見出し */
+h2 {
+  font-size: 18px;
   margin: 5px 0;
-  padding: 5px;
-  border-bottom: 1px solid #ddd;
+}
+
+h3 {
+  font-size: 14px;
+  margin: 5px 0;
+  color: #666;
 }
 </style>
 </head>
 
 <body>
 
-<h2>配達ソート</h2>
+<section>
+<h2>📦 配達ソート</h2>
+</section>
 
-<h3>① マスタCSV（編集可）</h3>
+<section>
+<h3>マスタ</h3>
 <textarea id="csvInput"></textarea>
-<button onclick="loadCSV()">マスタ再読込</button>
+<button onclick="loadCSV()">マスタ読込</button>
+</section>
 
-<h3>② カメラ</h3>
-
-<div style="position:relative;">
+<section>
+<h3>カメラ</h3>
 <video id="video" autoplay playsinline></video>
-<div id="frame"></div>
-</div>
+<button onclick="capture()">📸 読み取り</button>
+</section>
 
-<button onclick="capture()">📸 撮影</button>
+<section>
+<h3>入力</h3>
+<input id="addressInput" placeholder="住所">
+<button onclick="addManual()">追加</button>
+</section>
 
-<h3>③ 入力</h3>
-<input id="addressInput" placeholder="住所入力">
-<button onclick="addManual()">➕ 追加</button>
-
-<div class="result" id="result"></div>
-
-<h3>④ 候補</h3>
+<section>
+<h3>候補</h3>
 <div id="candidates"></div>
+</section>
 
-<h3>⑤ 配達リスト</h3>
+<section>
+<h3>配達リスト</h3>
 <div id="list"></div>
+</section>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
 
@@ -83,9 +127,7 @@ video {
 let master = [];
 let results = [];
 
-/* -----------------------
-   🔥 初期マスタ（10件）
-------------------------*/
+/* 初期マスタ */
 const defaultMaster = `
 1,東京都新宿区西新宿1-1-1
 2,東京都渋谷区渋谷2-2-2
@@ -100,32 +142,25 @@ const defaultMaster = `
 11,東京都千代田区大手町二丁目3番1号
 `.trim();
 
-// 初期表示
 document.getElementById("csvInput").value = defaultMaster;
 loadCSV();
 
-/* -----------------------
-   カメラ起動
-------------------------*/
+/* カメラ */
 navigator.mediaDevices.getUserMedia({
   video: { facingMode: { exact: "environment" } }
 }).then(s => {
   document.getElementById("video").srcObject = s;
 }).catch(() => {
   navigator.mediaDevices.getUserMedia({ video: true })
-  .then(s => {
-    document.getElementById("video").srcObject = s;
-  });
+  .then(s => document.getElementById("video").srcObject = s);
 });
 
-/* -----------------------
-   マスタ読込
-------------------------*/
+/* マスタ */
 function loadCSV() {
   const text = document.getElementById("csvInput").value;
 
-  master = text.split("\n").map(line => {
-    const [order, address] = line.split(",");
+  master = text.split("\n").map(l => {
+    const [order, address] = l.split(",");
     return {
       order: parseInt(order),
       address,
@@ -133,129 +168,106 @@ function loadCSV() {
     };
   });
 
-  alert("マスタ更新完了");
+  alert("OK");
 }
 
-/* -----------------------
-   OCR
-------------------------*/
+/* OCR */
 async function capture() {
-  const video = document.getElementById("video");
+  const v = document.getElementById("video");
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  canvas.width = video.videoWidth * 1.5;
-  canvas.height = video.videoHeight * 1.5;
+  canvas.width = v.videoWidth * 1.5;
+  canvas.height = v.videoHeight * 1.5;
 
   ctx.filter = "contrast(2) brightness(1.2)";
 
   ctx.drawImage(
-    video,
-    video.videoWidth * 0.1,
-    video.videoHeight * 0.2,
-    video.videoWidth * 0.8,
-    video.videoHeight * 0.4,
-    0, 0,
+    v,
+    v.videoWidth * 0.1,
+    v.videoHeight * 0.2,
+    v.videoWidth * 0.8,
+    v.videoHeight * 0.4,
+    0,0,
     canvas.width,
     canvas.height
   );
 
-  document.getElementById("result").innerText = "読み取り中...";
+  const { data:{ text } } = await Tesseract.recognize(canvas,"jpn");
 
-  const { data: { text } } = await Tesseract.recognize(canvas, "jpn");
-
-  const addr = extractAddress(text);
-
-  if (!addr) {
-    document.getElementById("result").innerText = "失敗";
-    return;
-  }
+  const addr = extract(text);
+  if(!addr) return;
 
   const clean = normalize(addr);
-
   document.getElementById("addressInput").value = clean;
 
   showCandidates(clean);
 }
 
-/* -----------------------
-   候補
-------------------------*/
-function showCandidates(text) {
-  const candidates = master
-    .map(m => ({
-      ...m,
-      score: similarity(text, m.address)
-    }))
+/* 候補 */
+function showCandidates(text){
+  const list = master
+    .map(m=>({...m,score:similarity(text,m.address)}))
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
 
   document.getElementById("candidates").innerHTML =
-    candidates.map(c => `
-      <div>
-        ${c.order}. ${c.address}
-        <button onclick="selectCandidate(${c.order})">追加</button>
+    list.map(c=>`
+      <div class="item">
+        <div>${c.order}. ${c.address}</div>
+        <button onclick="select(${c.order})">追加</button>
       </div>
     `).join("");
 }
 
-function selectCandidate(order) {
-  const m = master.find(x => x.order === order);
-  if (!m) return;
+function select(order){
+  const m = master.find(x=>x.order===order);
+  if(!m) return;
 
-  if (!results.find(r => r.order === order)) {
+  if(!results.find(r=>r.order===order)){
     results.push(m);
-    updateList();
+    update();
   }
 
-  document.getElementById("result").innerText = "追加: " + m.address;
-  document.getElementById("candidates").innerHTML = "";
+  document.getElementById("candidates").innerHTML="";
 }
 
-/* -----------------------
-   手動追加
-------------------------*/
-function addManual() {
-  const val = document.getElementById("addressInput").value;
-  const m = master.find(x => val.includes(x.address));
+/* 手動 */
+function addManual(){
+  const v = document.getElementById("addressInput").value;
+  const m = master.find(x=>v.includes(x.address));
 
-  if (m) {
-    if (!results.find(r => r.order === m.order)) {
-      results.push(m);
-      updateList();
-    }
+  if(m && !results.find(r=>r.order===m.order)){
+    results.push(m);
+    update();
   }
 
-  document.getElementById("addressInput").value = "";
+  document.getElementById("addressInput").value="";
 }
 
-/* -----------------------
-   削除
-------------------------*/
-function removeItem(order) {
-  results = results.filter(r => r.order !== order);
-  updateList();
+/* 削除 */
+function remove(order){
+  results = results.filter(r=>r.order!==order);
+  update();
 }
 
-/* -----------------------
-   リスト更新
-------------------------*/
-function updateList() {
-  const sorted = results.sort((a,b)=>a.order-b.order);
+/* 表示 */
+function update(){
+  results.sort((a,b)=>a.order-b.order);
 
   document.getElementById("list").innerHTML =
-    sorted.map(m =>
-      `<div>${m.order}. ${m.address}
-      <button onclick="removeItem(${m.order})">削除</button></div>`
-    ).join("");
+    results.map(r=>`
+      <div class="item">
+        <div>${r.order}. ${r.address}</div>
+        <button class="small-btn" onclick="remove(${r.order})">削除</button>
+      </div>
+    `).join("");
 }
 
-/* -----------------------
-   OCR補助
-------------------------*/
-function extractAddress(text) {
-  return text.split("\n").find(l =>
+/* OCR補助 */
+function extract(t){
+  return t.split("\n").find(l=>
     (l.includes("区")||l.includes("市")) && /\d/.test(l)
   );
 }
