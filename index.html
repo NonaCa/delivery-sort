@@ -2,235 +2,159 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>配達ソート</title>
-
+<title>配達ソート（サジェスト版）</title>
 <style>
-body { font-family:-apple-system; background:#f6f6f6; padding:10px; }
-section { background:#fff; padding:10px; margin-bottom:10px; border-radius:10px; }
-
-video, canvas.preview {
-  width:100%; height:35vh; object-fit:cover;
-  border-radius:10px; background:#000;
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 16px;
+  background: #f5f5f5;
 }
 
-button {
-  width:100%; padding:14px; margin-top:6px;
-  font-size:18px; border:none; border-radius:8px;
-  background:#007aff; color:#fff;
+h1 {
+  font-size: 20px;
+}
+
+input {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.suggest {
+  background: white;
+  border: 1px solid #ccc;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.suggest div {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+}
+
+.suggest div:hover {
+  background: #f0f0f0;
+}
+
+.list {
+  margin-top: 20px;
+  background: white;
+  padding: 10px;
 }
 
 .item {
-  background:#eee; margin-top:6px; padding:10px;
-  border-radius:8px; display:flex; justify-content:space-between;
+  padding: 8px;
+  border-bottom: 1px solid #eee;
 }
 
-.small-btn { background:#ff3b30; width:auto; padding:6px 10px; }
-
-textarea, input {
-  width:100%; padding:10px; margin-top:6px;
-  border-radius:8px; border:1px solid #ccc;
-}
-
-#status {
-  position:fixed; bottom:20px; left:50%;
-  transform:translateX(-50%);
-  background:#111; color:#fff;
-  padding:10px 16px; border-radius:20px;
-  opacity:0; transition:.3s;
+button {
+  margin-top: 10px;
+  padding: 10px;
+  width: 100%;
+  font-size: 16px;
 }
 </style>
 </head>
 
 <body>
 
-<section>
-<h2>📦 配達ソート</h2>
-<div id="nextHint"></div>
-</section>
+<h1>📦 配達ソート</h1>
 
-<section>
-<h3>マスタ</h3>
-<textarea id="csvInput"></textarea>
-<button onclick="loadCSV()">マスタ読込</button>
-</section>
+<input id="search" placeholder="住所を入力..." />
 
-<section>
-<h3>カメラ</h3>
-<video id="video" autoplay playsinline></video>
-<canvas id="freeze" class="preview" style="display:none;"></canvas>
+<div id="suggest" class="suggest"></div>
 
-<button onclick="startCamera()">📷 カメラ起動</button>
-<button id="scanBtn" onclick="capture()">📸 読み取り</button>
-<button onclick="resumeCamera()">▶ 戻す</button>
-</section>
+<div class="list">
+  <h3>配達順</h3>
+  <div id="result"></div>
+</div>
 
-<section>
-<h3>入力</h3>
-<input id="addressInput">
-<button onclick="addManual()">追加</button>
-</section>
-
-<section>
-<h3>候補</h3>
-<div id="candidates"></div>
-</section>
-
-<section>
-<h3>配達リスト</h3>
-<div id="list"></div>
-</section>
-
-<div id="status"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+<button onclick="clearList()">リセット</button>
 
 <script>
-let master=[], results=[], stream=null, scanning=false;
+// ===== マスタデータ =====
+const master = [
+  { address: "西新宿1-1-1", order: 2 },
+  { address: "渋谷2-2-2", order: 1 },
+  { address: "六本木3-3-3", order: 3 },
+  { address: "池袋4-4-4", order: 4 },
+];
 
-const defaultMaster=`
-1,東京都新宿区西新宿1-1-1
-2,東京都渋谷区渋谷2-2-2
-3,東京都港区六本木3-3-3
-`.trim();
+// ===== 状態 =====
+let selected = JSON.parse(localStorage.getItem("list") || "[]");
 
-csvInput.value=defaultMaster;
-loadCSV();
+// ===== DOM =====
+const search = document.getElementById("search");
+const suggest = document.getElementById("suggest");
+const result = document.getElementById("result");
 
-/* ステータス */
-function showStatus(t){
-  status.innerText=t;
-  status.style.opacity=1;
-  setTimeout(()=>status.style.opacity=0,2000);
-}
+// ===== サジェスト =====
+search.addEventListener("input", () => {
+  const val = search.value;
+  suggest.innerHTML = "";
 
-/* カメラ */
-function startCamera(){
-  navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
-  .then(s=>{
-    stream=s;
-    video.srcObject=s;
-    showStatus("カメラON");
-  })
-  .catch(()=>showStatus("カメラ許可して"));
-}
+  if (!val) return;
 
-/* OCR（タイムアウト付き） */
-async function capture(){
-  if(!stream){ showStatus("カメラ起動して"); return; }
-  if(scanning) return;
-  scanning=true;
-
-  scanBtn.innerText="読み取り中…";
-  scanBtn.disabled=true;
-
-  const canvas=freeze;
-  const ctx=canvas.getContext("2d");
-
-  // 🔥 軽量化（重要）
-  canvas.width=video.videoWidth*0.8;
-  canvas.height=video.videoHeight*0.3;
-
-  ctx.drawImage(
-    video,
-    video.videoWidth*0.1,
-    video.videoHeight*0.3,
-    video.videoWidth*0.8,
-    video.videoHeight*0.3,
-    0,0,canvas.width,canvas.height
+  const filtered = master.filter(m =>
+    m.address.includes(val)
   );
 
-  video.style.display="none";
-  canvas.style.display="block";
+  filtered.forEach(item => {
+    const div = document.createElement("div");
+    div.textContent = item.address;
 
-  showStatus("解析中…");
+    div.onclick = () => addItem(item);
 
-  try{
-    const result = await Promise.race([
-      Tesseract.recognize(canvas,"jpn"),
-      new Promise((_,reject)=>
-        setTimeout(()=>reject("timeout"),10000)
-      )
-    ]);
+    suggest.appendChild(div);
+  });
+});
 
-    if(result==="timeout"){
-      showStatus("遅すぎ（失敗）");
-      finish();
-      return;
-    }
+// ===== 追加 =====
+function addItem(item) {
+  // 重複防止
+  if (selected.find(s => s.address === item.address)) return;
 
-    const text=result.data.text;
-    const addr=extract(text);
+  selected.push(item);
 
-    if(!addr){
-      showStatus("読めない");
-      finish();
-      return;
-    }
+  // 並び替え
+  selected.sort((a, b) => a.order - b.order);
 
-    const clean=normalize(addr);
-    addressInput.value=clean;
+  save();
+  render();
 
-    showStatus("OK");
-    showCandidates(clean);
-
-  }catch{
-    showStatus("OCR失敗");
-  }
-
-  finish();
+  search.value = "";
+  suggest.innerHTML = "";
 }
 
-function finish(){
-  scanBtn.innerText="📸 読み取り";
-  scanBtn.disabled=false;
-  scanning=false;
-}
+// ===== 表示 =====
+function render() {
+  result.innerHTML = "";
 
-/* 戻す */
-function resumeCamera(){
-  video.style.display="block";
-  freeze.style.display="none";
-}
-
-/* マスタ */
-function loadCSV(){
-  master=csvInput.value.split("\n").map(l=>{
-    const [o,a]=l.split(",");
-    return {order:+o,address:a,key:normalize(a)};
+  selected.forEach((item, index) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = `${index + 1}️⃣ ${item.address}`;
+    result.appendChild(div);
   });
 }
 
-/* 正規化 */
-function normalize(a){
-  return a.replace(/[０-９]/g,s=>String.fromCharCode(s.charCodeAt(0)-65248))
-    .replace(/丁目|番|号/g,"-")
-    .replace(/東京都|.+?区|.+?市/g,"")
-    .replace(/\s/g,"");
+// ===== 保存 =====
+function save() {
+  localStorage.setItem("list", JSON.stringify(selected));
 }
 
-/* 抽出 */
-function extract(t){
-  return t.split("\n").find(l=>/\d/.test(l));
+// ===== リセット =====
+function clearList() {
+  selected = [];
+  save();
+  render();
 }
 
-/* 候補 */
-function showCandidates(t){
-  const list=master
-    .map(m=>({...m,score:score(t,m.key)}))
-    .sort((a,b)=>b.score-a.score)
-    .slice(0,3);
-
-  candidates.innerHTML=list.map(c=>`
-    <div class="item">${c.address}</div>
-  `).join("");
-}
-
-function score(a,b){
-  const na=a.match(/\d+/g)||[];
-  const nb=b.match(/\d+/g)||[];
-  return na.filter(n=>nb.includes(n)).length;
-}
+// 初期表示
+render();
 </script>
 
 </body>
