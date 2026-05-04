@@ -2,86 +2,132 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>配達ソート（サジェスト版）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配達ソート</title>
+
 <style>
 body {
-  font-family: sans-serif;
   margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont;
+  background: #f2f2f7;
+}
+
+.container {
   padding: 16px;
-  background: #f5f5f5;
 }
 
 h1 {
   font-size: 20px;
+  margin-bottom: 10px;
+}
+
+.card {
+  background: white;
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
 
 input {
   width: 100%;
-  padding: 12px;
-  font-size: 16px;
-  margin-bottom: 8px;
+  padding: 14px;
+  font-size: 18px;
+  border: none;
+  outline: none;
 }
 
 .suggest {
-  background: white;
-  border: 1px solid #ccc;
-  max-height: 150px;
+  max-height: 200px;
   overflow-y: auto;
 }
 
 .suggest div {
-  padding: 10px;
+  padding: 14px;
   border-bottom: 1px solid #eee;
-  cursor: pointer;
+  font-size: 16px;
 }
 
-.suggest div:hover {
-  background: #f0f0f0;
+.suggest div:active {
+  background: #e5e5ea;
 }
 
-.list {
-  margin-top: 20px;
+.list-item {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+  font-size: 16px;
+}
+
+.footer {
+  position: fixed;
+  bottom: 0;
+  width: 100%;
   background: white;
   padding: 10px;
-}
-
-.item {
-  padding: 8px;
-  border-bottom: 1px solid #eee;
+  box-shadow: 0 -2px 6px rgba(0,0,0,0.05);
 }
 
 button {
-  margin-top: 10px;
-  padding: 10px;
   width: 100%;
+  padding: 14px;
   font-size: 16px;
+  border: none;
+  border-radius: 10px;
+  background: #007aff;
+  color: white;
 }
 </style>
 </head>
 
 <body>
 
+<div class="container">
+
 <h1>📦 配達ソート</h1>
 
-<input id="search" placeholder="住所を入力..." />
+<div class="card">
+  <input id="search" placeholder="住所を入力（ひらがなOK）">
+  <div id="suggest" class="suggest"></div>
+</div>
 
-<div id="suggest" class="suggest"></div>
-
-<div class="list">
-  <h3>配達順</h3>
+<div class="card">
+  <div>配達順（<span id="count">0</span>件）</div>
   <div id="result"></div>
 </div>
 
-<button onclick="clearList()">リセット</button>
+</div>
+
+<div class="footer">
+  <button onclick="clearList()">リセット</button>
+</div>
 
 <script>
-// ===== マスタデータ =====
-const master = [
-  { address: "西新宿1-1-1", order: 2 },
-  { address: "渋谷2-2-2", order: 1 },
-  { address: "六本木3-3-3", order: 3 },
-  { address: "池袋4-4-4", order: 4 },
-];
+
+// ===== ひらがな簡易辞書 =====
+const hiraMap = {
+  "にし": "西",
+  "ひがし": "東",
+  "みなみ": "南",
+  "きた": "北",
+  "じょう": "城",
+  "ほん": "本",
+  "た": "田",
+};
+
+// ===== マスタ生成（100件）=====
+const towns = ["東町","西町","南町","北町","城南町","本町","田主丸町","御井町","合川町","荒木町"];
+
+let master = [];
+let id = 1;
+
+towns.forEach((town, i) => {
+  for (let j = 1; j <= 10; j++) {
+    master.push({
+      address: `久留米市${town}${j}-${j}-${j}`,
+      order: id++
+    });
+  }
+});
 
 // ===== 状態 =====
 let selected = JSON.parse(localStorage.getItem("list") || "[]");
@@ -90,17 +136,27 @@ let selected = JSON.parse(localStorage.getItem("list") || "[]");
 const search = document.getElementById("search");
 const suggest = document.getElementById("suggest");
 const result = document.getElementById("result");
+const count = document.getElementById("count");
+
+// ===== 正規化 =====
+function normalize(text) {
+  let t = text;
+  Object.keys(hiraMap).forEach(k => {
+    if (t.includes(k)) t = t.replace(k, hiraMap[k]);
+  });
+  return t;
+}
 
 // ===== サジェスト =====
 search.addEventListener("input", () => {
-  const val = search.value;
+  const val = normalize(search.value);
   suggest.innerHTML = "";
 
   if (!val) return;
 
   const filtered = master.filter(m =>
     m.address.includes(val)
-  );
+  ).slice(0, 10);
 
   filtered.forEach(item => {
     const div = document.createElement("div");
@@ -114,12 +170,9 @@ search.addEventListener("input", () => {
 
 // ===== 追加 =====
 function addItem(item) {
-  // 重複防止
   if (selected.find(s => s.address === item.address)) return;
 
   selected.push(item);
-
-  // 並び替え
   selected.sort((a, b) => a.order - b.order);
 
   save();
@@ -127,18 +180,23 @@ function addItem(item) {
 
   search.value = "";
   suggest.innerHTML = "";
+
+  // 軽いフィードバック
+  navigator.vibrate?.(30);
 }
 
 // ===== 表示 =====
 function render() {
   result.innerHTML = "";
 
-  selected.forEach((item, index) => {
+  selected.forEach((item, i) => {
     const div = document.createElement("div");
-    div.className = "item";
-    div.textContent = `${index + 1}️⃣ ${item.address}`;
+    div.className = "list-item";
+    div.textContent = `${i+1}. ${item.address}`;
     result.appendChild(div);
   });
+
+  count.textContent = selected.length;
 }
 
 // ===== 保存 =====
@@ -155,6 +213,7 @@ function clearList() {
 
 // 初期表示
 render();
+
 </script>
 
 </body>
