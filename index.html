@@ -8,73 +8,65 @@
 <style>
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont;
+  font-family: -apple-system;
   background: #f2f2f7;
 }
 
 .container {
-  padding: 16px;
+  padding: 12px;
 }
 
-h1 {
-  font-size: 20px;
+.tabs {
+  display: flex;
+  overflow-x: auto;
   margin-bottom: 10px;
+}
+
+.tab {
+  padding: 10px 14px;
+  background: #ddd;
+  border-radius: 10px;
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: #007aff;
+  color: white;
 }
 
 .card {
   background: white;
   border-radius: 14px;
-  padding: 12px;
-  margin-bottom: 12px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  padding: 10px;
+  margin-bottom: 10px;
 }
 
 input {
   width: 100%;
   padding: 14px;
-  font-size: 18px;
+  font-size: 16px;
   border: none;
-  outline: none;
-}
-
-.suggest {
-  max-height: 200px;
-  overflow-y: auto;
 }
 
 .suggest div {
-  padding: 14px;
+  padding: 12px;
   border-bottom: 1px solid #eee;
-  font-size: 16px;
-}
-
-.suggest div:active {
-  background: #e5e5ea;
 }
 
 .list-item {
-  padding: 12px;
-  border-bottom: 1px solid #eee;
-  font-size: 16px;
-}
-
-.footer {
-  position: fixed;
-  bottom: 0;
-  width: 100%;
-  background: white;
   padding: 10px;
-  box-shadow: 0 -2px 6px rgba(0,0,0,0.05);
+  border-bottom: 1px solid #eee;
 }
 
 button {
   width: 100%;
   padding: 14px;
-  font-size: 16px;
   border: none;
   border-radius: 10px;
   background: #007aff;
   color: white;
+  margin-top: 8px;
 }
 </style>
 </head>
@@ -83,135 +75,174 @@ button {
 
 <div class="container">
 
-<h1>📦 配達ソート</h1>
+<h3>📦 配達ソート</h3>
+
+<div id="tabs" class="tabs"></div>
 
 <div class="card">
-  <input id="search" placeholder="住所を入力（ひらがなOK）">
-  <div id="suggest" class="suggest"></div>
+  <input id="search" placeholder="住所検索（ひらがなOK）">
+  <div id="suggest"></div>
 </div>
 
 <div class="card">
-  <div>配達順（<span id="count">0</span>件）</div>
+  <div id="zoneTitle">配達順</div>
   <div id="result"></div>
 </div>
 
+<div class="card">
+  <input type="file" id="csvFile" accept=".csv">
+  <button onclick="importCSV()">CSV読み込み</button>
 </div>
 
-<div class="footer">
-  <button onclick="clearList()">リセット</button>
+<button onclick="clearList()">リセット</button>
+
 </div>
 
 <script>
 
-// ===== ひらがな簡易辞書 =====
-const hiraMap = {
-  "にし": "西",
-  "ひがし": "東",
-  "みなみ": "南",
-  "きた": "北",
-  "じょう": "城",
-  "ほん": "本",
-  "た": "田",
-};
-
-// ===== マスタ生成（100件）=====
-const towns = ["東町","西町","南町","北町","城南町","本町","田主丸町","御井町","合川町","荒木町"];
-
-let master = [];
-let id = 1;
-
-towns.forEach((town, i) => {
-  for (let j = 1; j <= 10; j++) {
-    master.push({
-      address: `久留米市${town}${j}-${j}-${j}`,
-      order: id++
-    });
-  }
-});
-
 // ===== 状態 =====
-let selected = JSON.parse(localStorage.getItem("list") || "[]");
+let master = [];
+let zones = [];
+let currentZone = "";
+let selected = JSON.parse(localStorage.getItem("list") || "{}");
 
 // ===== DOM =====
+const tabs = document.getElementById("tabs");
 const search = document.getElementById("search");
 const suggest = document.getElementById("suggest");
 const result = document.getElementById("result");
-const count = document.getElementById("count");
+const zoneTitle = document.getElementById("zoneTitle");
 
-// ===== 正規化 =====
-function normalize(text) {
-  let t = text;
-  Object.keys(hiraMap).forEach(k => {
-    if (t.includes(k)) t = t.replace(k, hiraMap[k]);
+// ===== ひらがな変換 =====
+const hiraMap = {"にし":"西","ひがし":"東","みなみ":"南","きた":"北"};
+
+function normalize(t){
+  Object.keys(hiraMap).forEach(k=>{
+    if(t.includes(k)) t = t.replace(k,hiraMap[k]);
   });
   return t;
 }
 
-// ===== サジェスト =====
-search.addEventListener("input", () => {
-  const val = normalize(search.value);
-  suggest.innerHTML = "";
+// ===== CSV読み込み =====
+function importCSV(){
+  const file = document.getElementById("csvFile").files[0];
+  if(!file) return alert("CSV選択して");
 
-  if (!val) return;
+  const reader = new FileReader();
 
-  const filtered = master.filter(m =>
-    m.address.includes(val)
-  ).slice(0, 10);
+  reader.onload = e=>{
+    const lines = e.target.result.split("\n").slice(1);
 
-  filtered.forEach(item => {
+    master = lines.map(l=>{
+      const [zone,address,order] = l.split(",");
+      return {
+        zone: zone?.trim(),
+        address: address?.trim(),
+        order: Number(order)
+      };
+    }).filter(x=>x.address);
+
+    // ゾーン抽出
+    zones = [...new Set(master.map(m=>m.zone))];
+
+    currentZone = zones[0];
+    initTabs();
+
+    alert("読み込み完了");
+  };
+
+  reader.readAsText(file);
+}
+
+// ===== タブ生成 =====
+function initTabs(){
+  tabs.innerHTML = "";
+
+  zones.forEach(z=>{
     const div = document.createElement("div");
-    div.textContent = item.address;
+    div.className = "tab";
+    div.textContent = z;
 
-    div.onclick = () => addItem(item);
+    div.onclick = ()=>{
+      currentZone = z;
+      renderTabs();
+      render();
+    };
 
-    suggest.appendChild(div);
+    tabs.appendChild(div);
   });
+
+  renderTabs();
+}
+
+function renderTabs(){
+  [...tabs.children].forEach(tab=>{
+    tab.classList.toggle("active", tab.textContent===currentZone);
+  });
+}
+
+// ===== サジェスト =====
+search.addEventListener("input", ()=>{
+  const val = normalize(search.value);
+  suggest.innerHTML="";
+
+  if(!val) return;
+
+  master
+    .filter(m=>m.zone===currentZone && m.address.includes(val))
+    .slice(0,10)
+    .forEach(item=>{
+      const div=document.createElement("div");
+      div.textContent=item.address;
+      div.onclick=()=>addItem(item);
+      suggest.appendChild(div);
+    });
 });
 
 // ===== 追加 =====
-function addItem(item) {
-  if (selected.find(s => s.address === item.address)) return;
+function addItem(item){
+  if(!selected[currentZone]) selected[currentZone]=[];
 
-  selected.push(item);
-  selected.sort((a, b) => a.order - b.order);
+  if(selected[currentZone].find(s=>s.address===item.address)) return;
+
+  selected[currentZone].push(item);
+  selected[currentZone].sort((a,b)=>a.order-b.order);
 
   save();
   render();
 
-  search.value = "";
-  suggest.innerHTML = "";
-
-  // 軽いフィードバック
-  navigator.vibrate?.(30);
+  search.value="";
+  suggest.innerHTML="";
 }
 
 // ===== 表示 =====
-function render() {
-  result.innerHTML = "";
+function render(){
+  result.innerHTML="";
 
-  selected.forEach((item, i) => {
-    const div = document.createElement("div");
-    div.className = "list-item";
-    div.textContent = `${i+1}. ${item.address}`;
+  const list = selected[currentZone] || [];
+
+  list.forEach((item,i)=>{
+    const div=document.createElement("div");
+    div.className="list-item";
+    div.textContent=`${i+1}. ${item.address}`;
     result.appendChild(div);
   });
 
-  count.textContent = selected.length;
+  zoneTitle.textContent = `配達順（${currentZone}）`;
 }
 
 // ===== 保存 =====
-function save() {
-  localStorage.setItem("list", JSON.stringify(selected));
+function save(){
+  localStorage.setItem("list",JSON.stringify(selected));
 }
 
 // ===== リセット =====
-function clearList() {
-  selected = [];
+function clearList(){
+  selected={};
   save();
   render();
 }
 
-// 初期表示
 render();
 
 </script>
