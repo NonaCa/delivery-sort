@@ -14,7 +14,6 @@ body {
   color: #111;
 }
 
-/* 全体をカード風 */
 section {
   background: #fff;
   padding: 10px;
@@ -22,7 +21,6 @@ section {
   border-radius: 10px;
 }
 
-/* ボタン大きく（現場用） */
 button {
   width: 100%;
   font-size: 18px;
@@ -34,7 +32,6 @@ button {
   color: #fff;
 }
 
-/* 入力 */
 textarea, input {
   width: 100%;
   font-size: 16px;
@@ -44,7 +41,6 @@ textarea, input {
   border: 1px solid #ccc;
 }
 
-/* カメラ */
 video {
   width: 100%;
   height: 35vh;
@@ -53,7 +49,6 @@ video {
   background: #000;
 }
 
-/* 候補・リスト */
 .item {
   padding: 10px;
   margin-top: 6px;
@@ -72,16 +67,13 @@ video {
   background: #ff3b30;
 }
 
-/* 見出し */
-h2 {
-  font-size: 18px;
-  margin: 5px 0;
-}
+h2 { font-size: 18px; margin: 5px 0; }
+h3 { font-size: 14px; margin: 5px 0; color: #666; }
 
-h3 {
-  font-size: 14px;
-  margin: 5px 0;
-  color: #666;
+.ghost {
+  font-size: 13px;
+  color: #999;
+  margin-top: 4px;
 }
 </style>
 </head>
@@ -90,6 +82,7 @@ h3 {
 
 <section>
 <h2>📦 配達ソート</h2>
+<div class="ghost" id="nextHint"></div>
 </section>
 
 <section>
@@ -126,6 +119,7 @@ h3 {
 
 let master = [];
 let results = [];
+let scanning = false;
 
 /* 初期マスタ */
 const defaultMaster = `
@@ -145,22 +139,19 @@ const defaultMaster = `
 document.getElementById("csvInput").value = defaultMaster;
 loadCSV();
 
-/* カメラ */
+/* カメラ起動 */
 navigator.mediaDevices.getUserMedia({
-  video: { facingMode: { exact: "environment" } }
+  video: { facingMode: { ideal: "environment" } }
 }).then(s => {
-  document.getElementById("video").srcObject = s;
-}).catch(() => {
-  navigator.mediaDevices.getUserMedia({ video: true })
-  .then(s => document.getElementById("video").srcObject = s);
+  video.srcObject = s;
 });
 
-/* マスタ */
-function loadCSV() {
-  const text = document.getElementById("csvInput").value;
+/* マスタ読み込み */
+function loadCSV(){
+  const text = csvInput.value;
 
-  master = text.split("\n").map(l => {
-    const [order, address] = l.split(",");
+  master = text.split("\n").map(l=>{
+    const [order,address] = l.split(",");
     return {
       order: parseInt(order),
       address,
@@ -168,59 +159,96 @@ function loadCSV() {
     };
   });
 
+  localStorage.setItem("master", JSON.stringify(master));
   alert("OK");
 }
 
 /* OCR */
-async function capture() {
-  const v = document.getElementById("video");
+async function capture(){
+  if(scanning) return;
+  scanning = true;
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  canvas.width = v.videoWidth * 1.5;
-  canvas.height = v.videoHeight * 1.5;
+  canvas.width = video.videoWidth * 1.5;
+  canvas.height = video.videoHeight * 1.5;
 
   ctx.filter = "contrast(2) brightness(1.2)";
 
   ctx.drawImage(
-    v,
-    v.videoWidth * 0.1,
-    v.videoHeight * 0.2,
-    v.videoWidth * 0.8,
-    v.videoHeight * 0.4,
+    video,
+    video.videoWidth * 0.1,
+    video.videoHeight * 0.2,
+    video.videoWidth * 0.8,
+    video.videoHeight * 0.4,
     0,0,
     canvas.width,
     canvas.height
   );
 
-  const { data:{ text } } = await Tesseract.recognize(canvas,"jpn");
+  const { data:{ text } } = await Tesseract.recognize(canvas,"jpn",{
+    tessedit_char_whitelist: "0123456789-丁目番号東京都区市町村"
+  });
 
   const addr = extract(text);
-  if(!addr) return;
+  if(!addr){ scanning=false; return; }
 
   const clean = normalize(addr);
-  document.getElementById("addressInput").value = clean;
+  addressInput.value = clean;
+
+  navigator.vibrate?.(50);
 
   showCandidates(clean);
+
+  scanning = false;
 }
 
-/* 候補 */
+/* 正規化（最重要） */
+function normalize(addr){
+  return addr
+    .replace(/[０-９]/g,s=>String.fromCharCode(s.charCodeAt(0)-65248))
+    .replace(/[ー－−―]/g,"-")
+    .replace(/丁目|番地|番|号/g,"-")
+    .replace(/東京都|.+?区|.+?市/g,"")
+    .replace(/-+/g,"-")
+    .replace(/\s/g,"")
+    .replace(/^-|-$/g,"");
+}
+
+/* マッチング */
+function matchScore(input, master){
+  if(input === master) return 100;
+
+  let score = 0;
+
+  const a = input.match(/\d+/g) || [];
+  const b = master.match(/\d+/g) || [];
+
+  score += a.filter(n=>b.includes(n)).length * 10;
+
+  if(master.includes(input)) score += 20;
+  if(input.includes(master)) score += 20;
+
+  return score;
+}
+
+/* 候補表示 */
 function showCandidates(text){
   const list = master
-    .map(m=>({...m,score:similarity(text,m.address)}))
+    .map(m=>({...m,score:matchScore(text,m.key)}))
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
 
-  document.getElementById("candidates").innerHTML =
-    list.map(c=>`
-      <div class="item">
-        <div>${c.order}. ${c.address}</div>
-        <button onclick="select(${c.order})">追加</button>
-      </div>
-    `).join("");
+  candidates.innerHTML = list.map(c=>`
+    <div class="item">
+      <div>${c.order}. ${c.address}</div>
+      <button onclick="select(${c.order})">追加</button>
+    </div>
+  `).join("");
 }
 
+/* 選択 */
 function select(order){
   const m = master.find(x=>x.order===order);
   if(!m) return;
@@ -230,20 +258,24 @@ function select(order){
     update();
   }
 
-  document.getElementById("candidates").innerHTML="";
+  candidates.innerHTML="";
 }
 
 /* 手動 */
 function addManual(){
-  const v = document.getElementById("addressInput").value;
-  const m = master.find(x=>v.includes(x.address));
+  const v = addressInput.value;
+  const clean = normalize(v);
+
+  const m = master
+    .map(m=>({...m,score:matchScore(clean,m.key)}))
+    .sort((a,b)=>b.score-a.score)[0];
 
   if(m && !results.find(r=>r.order===m.order)){
     results.push(m);
     update();
   }
 
-  document.getElementById("addressInput").value="";
+  addressInput.value="";
 }
 
 /* 削除 */
@@ -252,17 +284,28 @@ function remove(order){
   update();
 }
 
-/* 表示 */
+/* 表示更新 */
 function update(){
   results.sort((a,b)=>a.order-b.order);
 
-  document.getElementById("list").innerHTML =
-    results.map(r=>`
-      <div class="item">
-        <div>${r.order}. ${r.address}</div>
-        <button class="small-btn" onclick="remove(${r.order})">削除</button>
-      </div>
-    `).join("");
+  list.innerHTML = results.map(r=>`
+    <div class="item">
+      <div>${r.order}. ${r.address}</div>
+      <button class="small-btn" onclick="remove(${r.order})">削除</button>
+    </div>
+  `).join("");
+
+  updateNext();
+}
+
+/* 次の目的地（ゴースト） */
+function updateNext(){
+  const remaining = master.filter(m=>!results.find(r=>r.order===m.order));
+  if(remaining.length){
+    nextHint.innerText = "次: " + remaining.sort((a,b)=>a.order-b.order)[0].address;
+  }else{
+    nextHint.innerText = "完了 🎉";
+  }
 }
 
 /* OCR補助 */
@@ -270,22 +313,6 @@ function extract(t){
   return t.split("\n").find(l=>
     (l.includes("区")||l.includes("市")) && /\d/.test(l)
   );
-}
-
-function normalize(a){
-  return a
-    .replace(/[ー－−]/g,"-")
-    .replace(/丁目/g,"-")
-    .replace(/番地/g,"-")
-    .replace(/\s/g,"");
-}
-
-function similarity(a,b){
-  let m=0;
-  for(let i=0;i<Math.min(a.length,b.length);i++){
-    if(a[i]===b[i])m++;
-  }
-  return m/Math.max(a.length,b.length);
 }
 
 </script>
