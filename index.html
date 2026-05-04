@@ -3,10 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <title>配達ソート</title>
+
 <style>
 body { font-family: sans-serif; padding: 10px; }
-button { font-size: 18px; padding: 10px; margin: 5px 0; }
-textarea, input { width: 100%; font-size: 16px; padding: 8px; }
+
+button {
+  font-size: 16px;
+  padding: 10px;
+  margin: 5px 0;
+}
+
+textarea, input {
+  width: 100%;
+  font-size: 16px;
+  padding: 8px;
+}
+
 video {
   width: 100%;
   height: 40vh;
@@ -14,182 +26,257 @@ video {
   background: #000;
   border-radius: 8px;
 }
+
+#freezeCanvas {
+  width: 100%;
+  height: 40vh;
+  display: none;
+  border-radius: 8px;
+}
+
 .result { margin-top: 10px; font-weight: bold; }
-.list { margin-top: 20px; }
+
+.list div {
+  margin: 5px 0;
+  padding: 5px;
+  border-bottom: 1px solid #ddd;
+}
+
+#frame {
+  position: absolute;
+  top: 20%;
+  left: 10%;
+  width: 80%;
+  height: 40%;
+  border: 2px solid red;
+  pointer-events: none;
+}
 </style>
 </head>
+
 <body>
 
 <h2>配達ソート</h2>
 
 <h3>① マスタCSV</h3>
-<textarea id="csvInput" placeholder="例:
-1,東京都新宿区西新宿1-1-1
-2,東京都渋谷区渋谷2-2-2"></textarea>
+<textarea id="csvInput" placeholder="1,東京都新宿区西新宿1-1-1"></textarea>
 <button onclick="loadCSV()">マスタ読込</button>
 
 <h3>② カメラ</h3>
+
+<div style="position:relative;">
 <video id="video" autoplay playsinline></video>
-<button onclick="capture()">📸 撮影（読み取り）</button>
+<canvas id="freezeCanvas"></canvas>
+<div id="frame"></div>
+</div>
+
+<button onclick="capture()">📸 撮影</button>
 <button onclick="toggleCamera()" id="toggleBtn">⏸ 一時停止</button>
 
-<h3>③ 入力（OCR or 手入力）</h3>
-<input id="addressInput" placeholder="住所を入力">
+<h3>③ 入力</h3>
+<input id="addressInput" placeholder="住所入力">
 <button onclick="addManual()">➕ 追加</button>
 
 <div class="result" id="result"></div>
 
-<h3>④ 配達順</h3>
-<div class="list" id="list"></div>
+<h3>④ 候補</h3>
+<div id="candidates"></div>
+
+<h3>⑤ 配達リスト</h3>
+<div id="list"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
 
 <script>
+
 let master = [];
 let results = [];
 let stream;
 let isPaused = false;
 
-// 外カメラ優先
+// カメラ起動（外カメラ優先）
 navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { exact: "environment" } }
-})
-.then(s => {
+  video: { facingMode: { exact: "environment" } }
+}).then(s => {
+  stream = s;
+  document.getElementById("video").srcObject = stream;
+}).catch(() => {
+  navigator.mediaDevices.getUserMedia({ video: true }).then(s => {
     stream = s;
     document.getElementById("video").srcObject = stream;
-})
-.catch(() => {
-    navigator.mediaDevices.getUserMedia({ video: true })
-    .then(s => {
-        stream = s;
-        document.getElementById("video").srcObject = stream;
-    });
+  });
 });
 
-// 一時停止 / 再開
+// 一時停止（フリーズ表示）
 function toggleCamera() {
-    if (!stream) return;
+  if (!stream) return;
 
-    const track = stream.getVideoTracks()[0];
-    isPaused = !isPaused;
+  isPaused = !isPaused;
 
-    track.enabled = !isPaused;
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("freezeCanvas");
 
-    document.getElementById("toggleBtn").innerText =
-        isPaused ? "▶ 再開" : "⏸ 一時停止";
+  if (isPaused) {
+    const temp = document.createElement("canvas");
+    temp.width = video.videoWidth;
+    temp.height = video.videoHeight;
+
+    temp.getContext("2d").drawImage(video, 0, 0);
+
+    canvas.getContext("2d").drawImage(temp, 0, 0);
+
+    video.style.display = "none";
+    canvas.style.display = "block";
+
+    document.getElementById("toggleBtn").innerText = "▶ 再開";
+  } else {
+    video.style.display = "block";
+    canvas.style.display = "none";
+
+    document.getElementById("toggleBtn").innerText = "⏸ 一時停止";
+  }
 }
 
-// CSV読み込み
+// マスタ読込
 function loadCSV() {
-    const text = document.getElementById("csvInput").value;
+  const text = document.getElementById("csvInput").value;
 
-    master = text.split("\n").map(line => {
-        const [order, address] = line.split(",");
-        if (!order || !address) return null;
+  master = text.split("\n").map(line => {
+    const [order, address] = line.split(",");
+    return {
+      order: parseInt(order),
+      address,
+      key: normalize(address)
+    };
+  });
 
-        return {
-            order: parseInt(order),
-            address: address,
-            key: extractKey(normalize(address))
-        };
-    }).filter(Boolean);
-
-    alert("マスタ登録完了");
+  alert("マスタ登録完了");
 }
 
-// 撮影→OCR→入力欄へ
+// 撮影→枠内OCR
 async function capture() {
-    const video = document.getElementById("video");
+  const video = document.getElementById("video");
 
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
-    document.getElementById("result").innerText = "読み取り中...";
+  canvas.width = video.videoWidth * 0.8;
+  canvas.height = video.videoHeight * 0.4;
 
-    const { data: { text } } = await Tesseract.recognize(canvas, "jpn");
+  ctx.drawImage(
+    video,
+    video.videoWidth * 0.1,
+    video.videoHeight * 0.2,
+    video.videoWidth * 0.8,
+    video.videoHeight * 0.4,
+    0, 0,
+    canvas.width,
+    canvas.height
+  );
 
-    const addr = extractAddress(text);
+  document.getElementById("result").innerText = "読み取り中...";
 
-    if (!addr) {
-        document.getElementById("result").innerText = "住所検出失敗";
-        return;
-    }
+  const { data: { text } } = await Tesseract.recognize(canvas, "jpn");
 
-    document.getElementById("addressInput").value = addr;
-    document.getElementById("result").innerText = "✔ 読み取り完了（確認して追加）";
+  const addr = extractAddress(text);
+
+  if (!addr) {
+    document.getElementById("result").innerText = "失敗";
+    return;
+  }
+
+  document.getElementById("addressInput").value = addr;
+
+  showCandidates(addr);
+}
+
+// 候補表示
+function showCandidates(text) {
+  const candidates = master
+    .map(m => ({
+      ...m,
+      score: similarity(text, m.address)
+    }))
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,3);
+
+  const html = candidates.map(c => `
+    <div>
+      ${c.order}. ${c.address}
+      <button onclick="selectCandidate(${c.order})">追加</button>
+    </div>
+  `).join("");
+
+  document.getElementById("candidates").innerHTML = html;
+}
+
+// 候補選択
+function selectCandidate(order) {
+  const m = master.find(x => x.order === order);
+  if (!m) return;
+
+  if (!results.find(r => r.order === order)) {
+    results.push(m);
+    updateList();
+  }
+
+  document.getElementById("result").innerText = "追加: " + m.address;
+  document.getElementById("candidates").innerHTML = "";
 }
 
 // 手動追加
 function addManual() {
-    const input = document.getElementById("addressInput").value;
-    if (!input) return;
+  const val = document.getElementById("addressInput").value;
+  const m = master.find(x => val.includes(x.address));
 
-    const key = extractKey(normalize(input));
-    const match = findMatch(key);
-
-    if (match) {
-        if (!results.find(r => r.order === match.order)) {
-            results.push(match);
-            updateList();
-        }
-        document.getElementById("result").innerText = "✔ 追加: " + input;
-    } else {
-        document.getElementById("result").innerText = "一致なし: " + input;
+  if (m) {
+    if (!results.find(r => r.order === m.order)) {
+      results.push(m);
+      updateList();
     }
+  }
 
-    document.getElementById("addressInput").value = "";
+  document.getElementById("addressInput").value = "";
 }
 
-// Enterでも追加
-document.getElementById("addressInput")
-.addEventListener("keypress", function(e) {
-    if (e.key === "Enter") addManual();
-});
+// 削除
+function removeItem(order) {
+  results = results.filter(r => r.order !== order);
+  updateList();
+}
 
-// 住所抽出
+// リスト更新
+function updateList() {
+  const sorted = results.sort((a,b)=>a.order-b.order);
+
+  document.getElementById("list").innerHTML =
+    sorted.map(m =>
+      `<div>${m.order}. ${m.address}
+      <button onclick="removeItem(${m.order})">削除</button></div>`
+    ).join("");
+}
+
+// 抽出
 function extractAddress(text) {
-    const lines = text.split("\n");
-    return lines.find(line =>
-        (line.includes("区") || line.includes("市")) &&
-        /\d/.test(line)
-    );
+  return text.split("\n").find(l =>
+    (l.includes("区")||l.includes("市")) && /\d/.test(l)
+  );
 }
 
 // 正規化
-function normalize(addr) {
-    return addr
-        .replace(/丁目/g, "-")
-        .replace(/番地/g, "-")
-        .replace(/番/g, "-")
-        .replace(/号/g, "")
-        .replace(/\s/g, "");
+function normalize(a){
+  return a.replace(/\s/g,"");
 }
 
-// キー抽出
-function extractKey(addr) {
-    const match = addr.match(/(市|区|町|村)(.+)/);
-    return match ? match[2] : addr;
+// 類似度
+function similarity(a,b){
+  let m=0;
+  for(let i=0;i<Math.min(a.length,b.length);i++){
+    if(a[i]===b[i])m++;
+  }
+  return m/Math.max(a.length,b.length);
 }
 
-// マッチ
-function findMatch(key) {
-    return master.find(m =>
-        key.includes(m.key) || m.key.includes(key)
-    );
-}
-
-// 表示更新
-function updateList() {
-    const sorted = results.sort((a, b) => a.order - b.order);
-
-    const html = sorted.map(m =>
-        `<div>${m.order}. ${m.address}</div>`
-    ).join("");
-
-    document.getElementById("list").innerHTML = html;
-}
 </script>
 
 </body>
