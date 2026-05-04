@@ -32,9 +32,7 @@ button {
   color: #fff;
 }
 
-button:disabled {
-  opacity: 0.6;
-}
+button:disabled { opacity: 0.6; }
 
 textarea, input {
   width: 100%;
@@ -80,7 +78,6 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
   margin-top: 4px;
 }
 
-/* ステータス表示 */
 #status {
   position: fixed;
   bottom: 20px;
@@ -113,6 +110,7 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
 <section>
 <h3>カメラ</h3>
 <video id="video" autoplay playsinline></video>
+<button onclick="startCamera()">📷 カメラ起動</button>
 <button id="scanBtn" onclick="capture()">📸 読み取り</button>
 </section>
 
@@ -140,7 +138,9 @@ h3 { font-size: 14px; margin: 5px 0; color: #666; }
 let master = [];
 let results = [];
 let scanning = false;
+let stream = null;
 
+/* 初期マスタ */
 const defaultMaster = `
 1,東京都新宿区西新宿1-1-1
 2,東京都渋谷区渋谷2-2-2
@@ -158,22 +158,38 @@ const defaultMaster = `
 csvInput.value = defaultMaster;
 loadCSV();
 
-/* カメラ */
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: { ideal: "environment" } }
-}).then(s => video.srcObject = s);
-
-/* ステータス表示 */
+/* ステータス */
 function showStatus(text,type="normal"){
-  const el = status;
-  el.innerText = text;
+  status.innerText = text;
+  status.style.background =
+    type==="error" ? "#ff3b30" :
+    type==="ok" ? "#34c759" : "#111";
 
-  if(type==="error") el.style.background="#ff3b30";
-  else if(type==="ok") el.style.background="#34c759";
-  else el.style.background="#111";
+  status.style.opacity = 1;
+  setTimeout(()=>status.style.opacity=0,1500);
+}
 
-  el.style.opacity = 1;
-  setTimeout(()=>el.style.opacity=0,1500);
+/* カメラ起動（ユーザー操作必須） */
+function startCamera(){
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } }
+  })
+  .then(s=>{
+    stream = s;
+    video.srcObject = s;
+    showStatus("カメラON","ok");
+  })
+  .catch(err=>{
+    console.error(err);
+
+    if(err.name==="NotAllowedError"){
+      showStatus("カメラ許可して","error");
+    }else if(err.name==="NotFoundError"){
+      showStatus("カメラなし","error");
+    }else{
+      showStatus("カメラエラー","error");
+    }
+  });
 }
 
 /* マスタ */
@@ -188,28 +204,32 @@ function loadCSV(){
   });
 
   localStorage.setItem("master", JSON.stringify(master));
-  showStatus("マスタ読込OK","ok");
+  showStatus("マスタOK","ok");
 }
 
 /* OCR */
 async function capture(){
+  if(!stream){
+    showStatus("先にカメラ起動","error");
+    return;
+  }
+
   if(scanning) return;
   scanning = true;
 
-  const btn = scanBtn;
-  btn.innerText = "読み取り中…";
-  btn.disabled = true;
+  scanBtn.innerText="読み取り中…";
+  scanBtn.disabled=true;
 
   showStatus("読み取り中…");
 
   try{
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
+    const canvas=document.createElement("canvas");
+    const ctx=canvas.getContext("2d");
 
-    canvas.width = video.videoWidth * 1.5;
-    canvas.height = video.videoHeight * 1.5;
+    canvas.width=video.videoWidth*1.5;
+    canvas.height=video.videoHeight*1.5;
 
-    ctx.filter = "contrast(2) brightness(1.2)";
+    ctx.filter="contrast(2) brightness(1.2)";
     ctx.drawImage(video,
       video.videoWidth*0.1,
       video.videoHeight*0.2,
@@ -218,7 +238,7 @@ async function capture(){
       0,0,canvas.width,canvas.height
     );
 
-    const { data:{ text } } = await Tesseract.recognize(canvas,"jpn",{
+    const {data:{text}} = await Tesseract.recognize(canvas,"jpn",{
       tessedit_char_whitelist:"0123456789-丁目番号東京都区市町村"
     });
 
@@ -226,8 +246,8 @@ async function capture(){
 
     if(!addr){
       showStatus("読めなかった","error");
-      scanning=false;
       resetBtn();
+      scanning=false;
       return;
     }
 
@@ -240,7 +260,7 @@ async function capture(){
     showCandidates(clean);
 
   }catch(e){
-    showStatus("エラー","error");
+    showStatus("OCRエラー","error");
   }
 
   scanning=false;
@@ -264,24 +284,24 @@ function normalize(addr){
     .replace(/^-|-$/g,"");
 }
 
-/* マッチング */
-function matchScore(input,master){
-  if(input===master) return 100;
+/* マッチ */
+function matchScore(a,b){
+  if(a===b) return 100;
 
   let score=0;
-  const a=input.match(/\d+/g)||[];
-  const b=master.match(/\d+/g)||[];
+  const na=a.match(/\d+/g)||[];
+  const nb=b.match(/\d+/g)||[];
 
-  score+=a.filter(n=>b.includes(n)).length*10;
-  if(master.includes(input)) score+=20;
-  if(input.includes(master)) score+=20;
+  score+=na.filter(n=>nb.includes(n)).length*10;
+  if(b.includes(a)) score+=20;
+  if(a.includes(b)) score+=20;
 
   return score;
 }
 
 /* 候補 */
 function showCandidates(text){
-  const list = master
+  const list=master
     .map(m=>({...m,score:matchScore(text,m.key)}))
     .sort((a,b)=>b.score-a.score)
     .slice(0,3);
@@ -339,7 +359,7 @@ function update(){
   updateNext();
 }
 
-/* ゴースト */
+/* 次 */
 function updateNext(){
   const remaining=master.filter(m=>!results.find(r=>r.order===m.order));
   nextHint.innerText=remaining.length
