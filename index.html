@@ -2,11 +2,11 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>配達ソート（試作）</title>
+<title>配達ソート</title>
 <style>
 body { font-family: sans-serif; padding: 10px; }
 button { font-size: 18px; padding: 10px; margin: 5px 0; }
-textarea { width: 100%; height: 100px; }
+textarea, input { width: 100%; font-size: 16px; padding: 8px; }
 video { width: 100%; max-height: 300px; background: #000; }
 .result { margin-top: 10px; font-weight: bold; }
 .list { margin-top: 20px; }
@@ -14,9 +14,9 @@ video { width: 100%; max-height: 300px; background: #000; }
 </head>
 <body>
 
-<h2>配達ソート（試作）</h2>
+<h2>配達ソート</h2>
 
-<h3>① マスタCSV貼り付け</h3>
+<h3>① マスタCSV</h3>
 <textarea id="csvInput" placeholder="例:
 1,東京都新宿区西新宿1-1-1
 2,東京都渋谷区渋谷2-2-2"></textarea>
@@ -24,11 +24,15 @@ video { width: 100%; max-height: 300px; background: #000; }
 
 <h3>② カメラ</h3>
 <video id="video" autoplay playsinline></video>
-<button onclick="capture()">📸 撮影</button>
+<button onclick="capture()">📸 撮影（読み取り）</button>
+
+<h3>③ 入力（OCR or 手入力）</h3>
+<input id="addressInput" placeholder="住所を入力">
+<button onclick="addManual()">➕ 追加</button>
 
 <div class="result" id="result"></div>
 
-<h3>③ 配達順</h3>
+<h3>④ 配達順</h3>
 <div class="list" id="list"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
@@ -38,28 +42,41 @@ let master = [];
 let results = [];
 let stream;
 
-// カメラ起動
-navigator.mediaDevices.getUserMedia({ video: true })
+// 外カメラ優先
+navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { exact: "environment" } }
+})
 .then(s => {
     stream = s;
     document.getElementById("video").srcObject = stream;
+})
+.catch(() => {
+    navigator.mediaDevices.getUserMedia({ video: true })
+    .then(s => {
+        stream = s;
+        document.getElementById("video").srcObject = stream;
+    });
 });
 
 // CSV読み込み
 function loadCSV() {
     const text = document.getElementById("csvInput").value;
+
     master = text.split("\n").map(line => {
         const [order, address] = line.split(",");
+        if (!order || !address) return null;
+
         return {
             order: parseInt(order),
             address: address,
             key: extractKey(normalize(address))
         };
-    });
+    }).filter(Boolean);
+
     alert("マスタ登録完了");
 }
 
-// 撮影＋OCR
+// 撮影→OCR→入力欄へ
 async function capture() {
     const video = document.getElementById("video");
     const canvas = document.createElement("canvas");
@@ -78,17 +95,36 @@ async function capture() {
         return;
     }
 
-    const key = extractKey(normalize(addr));
+    document.getElementById("addressInput").value = addr;
+    document.getElementById("result").innerText = "✔ 読み取り完了（確認して追加）";
+}
+
+// 手動追加
+function addManual() {
+    const input = document.getElementById("addressInput").value;
+    if (!input) return;
+
+    const key = extractKey(normalize(input));
     const match = findMatch(key);
 
     if (match) {
-        results.push(match);
-        updateList();
-        document.getElementById("result").innerText = "✔ " + addr;
+        if (!results.find(r => r.order === match.order)) {
+            results.push(match);
+            updateList();
+        }
+        document.getElementById("result").innerText = "✔ 追加: " + input;
     } else {
-        document.getElementById("result").innerText = "一致なし: " + addr;
+        document.getElementById("result").innerText = "一致なし: " + input;
     }
+
+    document.getElementById("addressInput").value = "";
 }
+
+// Enterでも追加
+document.getElementById("addressInput")
+.addEventListener("keypress", function(e) {
+    if (e.key === "Enter") addManual();
+});
 
 // 住所抽出
 function extractAddress(text) {
@@ -115,19 +151,21 @@ function extractKey(addr) {
     return match ? match[2] : addr;
 }
 
-// マッチング
+// マッチ
 function findMatch(key) {
     return master.find(m =>
         key.includes(m.key) || m.key.includes(key)
     );
 }
 
-// リスト更新
+// 表示更新
 function updateList() {
     const sorted = results.sort((a, b) => a.order - b.order);
+
     const html = sorted.map(m =>
         `<div>${m.order}. ${m.address}</div>`
     ).join("");
+
     document.getElementById("list").innerHTML = html;
 }
 </script>
