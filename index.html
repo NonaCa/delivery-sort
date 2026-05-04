@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>配達ソート（試作）</title>
+<style>
+body { font-family: sans-serif; padding: 10px; }
+button { font-size: 18px; padding: 10px; margin: 5px 0; }
+textarea { width: 100%; height: 100px; }
+video { width: 100%; max-height: 300px; background: #000; }
+.result { margin-top: 10px; font-weight: bold; }
+.list { margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<h2>配達ソート（試作）</h2>
+
+<h3>① マスタCSV貼り付け</h3>
+<textarea id="csvInput" placeholder="例:
+1,東京都新宿区西新宿1-1-1
+2,東京都渋谷区渋谷2-2-2"></textarea>
+<button onclick="loadCSV()">マスタ読込</button>
+
+<h3>② カメラ</h3>
+<video id="video" autoplay playsinline></video>
+<button onclick="capture()">📸 撮影</button>
+
+<div class="result" id="result"></div>
+
+<h3>③ 配達順</h3>
+<div class="list" id="list"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+
+<script>
+let master = [];
+let results = [];
+let stream;
+
+// カメラ起動
+navigator.mediaDevices.getUserMedia({ video: true })
+.then(s => {
+    stream = s;
+    document.getElementById("video").srcObject = stream;
+});
+
+// CSV読み込み
+function loadCSV() {
+    const text = document.getElementById("csvInput").value;
+    master = text.split("\n").map(line => {
+        const [order, address] = line.split(",");
+        return {
+            order: parseInt(order),
+            address: address,
+            key: extractKey(normalize(address))
+        };
+    });
+    alert("マスタ登録完了");
+}
+
+// 撮影＋OCR
+async function capture() {
+    const video = document.getElementById("video");
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+
+    document.getElementById("result").innerText = "読み取り中...";
+
+    const { data: { text } } = await Tesseract.recognize(canvas, "jpn");
+
+    const addr = extractAddress(text);
+
+    if (!addr) {
+        document.getElementById("result").innerText = "住所検出失敗";
+        return;
+    }
+
+    const key = extractKey(normalize(addr));
+    const match = findMatch(key);
+
+    if (match) {
+        results.push(match);
+        updateList();
+        document.getElementById("result").innerText = "✔ " + addr;
+    } else {
+        document.getElementById("result").innerText = "一致なし: " + addr;
+    }
+}
+
+// 住所抽出
+function extractAddress(text) {
+    const lines = text.split("\n");
+    return lines.find(line =>
+        (line.includes("区") || line.includes("市")) &&
+        /\d/.test(line)
+    );
+}
+
+// 正規化
+function normalize(addr) {
+    return addr
+        .replace(/丁目/g, "-")
+        .replace(/番地/g, "-")
+        .replace(/番/g, "-")
+        .replace(/号/g, "")
+        .replace(/\s/g, "");
+}
+
+// キー抽出
+function extractKey(addr) {
+    const match = addr.match(/(市|区|町|村)(.+)/);
+    return match ? match[2] : addr;
+}
+
+// マッチング
+function findMatch(key) {
+    return master.find(m =>
+        key.includes(m.key) || m.key.includes(key)
+    );
+}
+
+// リスト更新
+function updateList() {
+    const sorted = results.sort((a, b) => a.order - b.order);
+    const html = sorted.map(m =>
+        `<div>${m.order}. ${m.address}</div>`
+    ).join("");
+    document.getElementById("list").innerHTML = html;
+}
+</script>
+
+</body>
+</html>
